@@ -1,0 +1,12 @@
+[package]
+name = "lincstation-n2-leds-rusty"
+version = "0.1.0"
+edition = "2024"
+authors = ["solar <none@none.com>"]
+description = "A Rust project for LincStation N2 LEDs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+i2cdev = "0.6"  # For I2C/SMBus (Arch has `i2c-tools` for fallback)
+sysfs_gpio = "0.6"  # Optional, if GPIO is needed

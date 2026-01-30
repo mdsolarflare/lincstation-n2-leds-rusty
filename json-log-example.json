@@ -1,0 +1,19 @@
+{
+  "leds": [
+    {
+      "timestamp": 1712345678,
+      "last_error": null,
+      "last_error_time": null,
+      "device": "NVME0_WHITE",
+      "is_on": true
+    },
+    {
+      "timestamp": 1712345678,
+      "last_error": "I2C timeout",
+      "last_error_time": 1712345677,
+      "device": "ETH0_RED",
+      "is_on": false
+    }
+  ],
+  "last_updated": 1712345678
+}
