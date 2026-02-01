@@ -402,14 +402,11 @@ fn check_drive_status_by_name(sys_name: &str) -> (LedColor, Option<String>) {
 // --- I2C LED Controller Functions ---
 
 /// Find the I2C bus that has the LED controller at address 0x26
-/// Probes each I2C bus by attempting to read a register from address 0x26
 fn find_i2c_bus() -> i32 {
-    // Scan /sys/class/i2c-dev/ for all I2C bus entries
     if let Ok(entries) = fs::read_dir("/sys/class/i2c-dev") {
         let mut buses: Vec<u32> = Vec::new();
         for entry in entries.flatten() {
             if let Ok(file_name) = entry.file_name().into_string() {
-                // Extract bus number from entry name (i2c-N)
                 if let Some(bus_str) = file_name.strip_prefix("i2c-") {
                     if let Ok(bus_num) = bus_str.parse::<u32>() {
                         buses.push(bus_num);
@@ -419,12 +416,7 @@ fn find_i2c_bus() -> i32 {
         }
         
         buses.sort();
-        eprintln!("DEBUG: Found {} I2C buses, probing for 0x26...", buses.len());
-        
-        // Try to probe address 0x26 on each bus to find the LED controller
-        // We use i2cget to test for presence
         for bus_num in buses {
-            eprintln!("  Probing bus {}...", bus_num);
             let output = Command::new("/usr/sbin/i2cget")
                 .arg("-y")
                 .arg(bus_num.to_string())
@@ -433,22 +425,14 @@ fn find_i2c_bus() -> i32 {
                 .arg("b")
                 .output();
             
-            match output {
-                Ok(output) => {
-                    eprintln!("    Status: {:?}, stdout: {}", output.status, String::from_utf8_lossy(&output.stdout));
-                    if output.status.success() {
-                        eprintln!("    Found LED controller on bus {}!", bus_num);
-                        return bus_num as i32;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("    Error: {}", e);
+            if let Ok(output) = output {
+                if output.status.success() {
+                    return bus_num as i32;
                 }
             }
         }
     }
-    eprintln!("LED controller not found on any bus");
-    -1 // Not found
+    -1
 }
 
 /// Get human-readable name for the I2C bus
@@ -465,69 +449,37 @@ fn get_i2c_bus_name(bus_num: i32) -> String {
 /// Falls back to i2cget command for reliability
 fn read_led_controller_state() -> LedControllerState {
     let bus = find_i2c_bus();
-    
     if bus < 0 {
-        eprintln!("LED controller not found during read_led_controller_state");
-        return LedControllerState {
-            bus_number: -1,
-            found: false,
-            registers: HashMap::new(),
-        };
+        return LedControllerState { bus_number: -1, found: false, registers: HashMap::new() };
     }
 
-    eprintln!("read_led_controller_state: Reading registers from bus {}", bus);
     let mut registers = HashMap::new();
-    
-    // Read key registers from the controller
-    // Based on the research: 0x50, 0x90 (mode), 0x91 (brightness), 0x95-0x97 (color1 RGB), 
-    // 0x98-0x9A (color2 RGB), 0xA0 (on state), 0xB0 (off state)
     let reg_addrs = vec![0x50, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA0, 0xB0];
     
-    // Use i2cget command for SMBus reads (reliable, system has i2c-tools)
     for &addr in &reg_addrs {
-        let output = Command::new("/usr/sbin/i2cget")
+        if let Ok(output) = Command::new("/usr/sbin/i2cget")
             .arg("-y")
             .arg(bus.to_string())
             .arg("0x26")
             .arg(format!("0x{:02x}", addr))
             .arg("b")
-            .output();
-        
-        if let Ok(output) = output {
-            eprintln!("  i2cget status: {:?}", output.status);
-            if !output.stderr.is_empty() {
-                eprintln!("    stderr: {}", String::from_utf8_lossy(&output.stderr));
-            }
+            .output()
+        {
             if output.status.success() {
-                let result = String::from_utf8_lossy(&output.stdout);
-                let trimmed = result.trim();
-                eprintln!("    stdout raw: '{}' (after trim: '{}')", result, trimmed);
-                // Strip "0x" prefix if present
+                let trimmed = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 let hex_str = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
                     &trimmed[2..]
                 } else {
-                    trimmed
+                    &trimmed
                 };
                 if let Ok(val) = u8::from_str_radix(hex_str, 16) {
-                    eprintln!("  Read 0x{:02X}: 0x{:02X}", addr, val);
                     registers.insert(addr, val);
-                } else {
-                    eprintln!("    Failed to parse hex: '{}'", hex_str);
                 }
-            } else {
-                eprintln!("  Failed to read 0x{:02X}: status {:?}", addr, output.status);
             }
-        } else {
-            eprintln!("  Error executing i2cget for 0x{:02X}", addr);
         }
     }
 
-    eprintln!("Total registers read: {}", registers.len());
-    LedControllerState {
-        bus_number: bus,
-        found: !registers.is_empty(),
-        registers,
-    }
+    LedControllerState { bus_number: bus, found: !registers.is_empty(), registers }
 }
 
 // --- Hardware Control ---
