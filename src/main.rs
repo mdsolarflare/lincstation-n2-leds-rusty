@@ -418,9 +418,13 @@ fn find_i2c_bus() -> i32 {
             }
         }
         
+        buses.sort();
+        eprintln!("DEBUG: Found {} I2C buses, probing for 0x26...", buses.len());
+        
         // Try to probe address 0x26 on each bus to find the LED controller
         // We use i2cget to test for presence
         for bus_num in buses {
+            eprintln!("  Probing bus {}...", bus_num);
             let output = Command::new("i2cget")
                 .arg("-y")
                 .arg(bus_num.to_string())
@@ -429,13 +433,21 @@ fn find_i2c_bus() -> i32 {
                 .arg("b")
                 .output();
             
-            if let Ok(output) = output {
-                if output.status.success() {
-                    return bus_num as i32;
+            match output {
+                Ok(output) => {
+                    eprintln!("    Status: {:?}, stdout: {}", output.status, String::from_utf8_lossy(&output.stdout));
+                    if output.status.success() {
+                        eprintln!("    Found LED controller on bus {}!", bus_num);
+                        return bus_num as i32;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("    Error: {}", e);
                 }
             }
         }
     }
+    eprintln!("LED controller not found on any bus");
     -1 // Not found
 }
 
