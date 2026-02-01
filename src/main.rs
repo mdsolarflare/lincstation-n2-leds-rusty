@@ -467,6 +467,7 @@ fn read_led_controller_state() -> LedControllerState {
     let bus = find_i2c_bus();
     
     if bus < 0 {
+        eprintln!("LED controller not found during read_led_controller_state");
         return LedControllerState {
             bus_number: -1,
             found: false,
@@ -474,6 +475,7 @@ fn read_led_controller_state() -> LedControllerState {
         };
     }
 
+    eprintln!("read_led_controller_state: Reading registers from bus {}", bus);
     let mut registers = HashMap::new();
     
     // Read key registers from the controller
@@ -495,12 +497,18 @@ fn read_led_controller_state() -> LedControllerState {
             if output.status.success() {
                 let result = String::from_utf8_lossy(&output.stdout);
                 if let Ok(val) = u8::from_str_radix(result.trim(), 16) {
+                    eprintln!("  Read 0x{:02X}: 0x{:02X}", addr, val);
                     registers.insert(addr, val);
                 }
+            } else {
+                eprintln!("  Failed to read 0x{:02X}: status {:?}", addr, output.status);
             }
+        } else {
+            eprintln!("  Error reading 0x{:02X}", addr);
         }
     }
 
+    eprintln!("Total registers read: {}", registers.len());
     LedControllerState {
         bus_number: bus,
         found: !registers.is_empty(),
