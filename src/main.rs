@@ -196,10 +196,18 @@ fn debug_check_status() {
             ("-", "-")
         };
 
-        println!("{:<12} | {:<12} | {:<8?} | {:<8} | {:<8} | {}", 
+        // UI Fix: Don't show an LED color for unmapped drives, it's confusing.
+        // We converts the color enum to string, or use "-" if not mapped.
+        let color_display = if slot_label != "(Not Mapped)" {
+            format!("{:?}", color)
+        } else {
+            "-".to_string()
+        };
+
+        println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {}", 
             sys_name, 
             slot_label, 
-            color, 
+            color_display, 
             reg,
             val,
             msg_str
