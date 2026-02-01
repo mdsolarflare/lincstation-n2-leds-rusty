@@ -1,6 +1,6 @@
 // The packages for the data structures
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::env;
 use std::fs;
 use std::path::Path;
@@ -45,6 +45,7 @@ struct LedLog {
     last_updated: String,
 }
 
+#[derive(Clone)]
 struct DriveSlot {
     slot_name: &'static str,
     sys_name: &'static str,
@@ -60,7 +61,6 @@ const SLOTS: &[DriveSlot] = &[
     DriveSlot { slot_name: "NVME2", sys_name: "nvme2n1" },
     DriveSlot { slot_name: "NVME3", sys_name: "nvme3n1" },
     // Position 6-7: SATA Drives
-    // User updated these to sdb/sdc
     DriveSlot { slot_name: "SATA0", sys_name: "sdb" },
     DriveSlot { slot_name: "SATA1", sys_name: "sdc" },
 ];
@@ -92,7 +92,7 @@ fn main() {
 
         let mut new_states = Vec::new();
         for slot in SLOTS {
-            let (color, msg) = check_drive_status(slot, &active_devices);
+            let (color, msg) = check_drive_status_by_name(slot.sys_name, &active_devices);
             
             let state = LedState {
                 timestamp: get_iso_timestamp(),
@@ -133,20 +133,72 @@ fn main() {
 // --- Debug Methods ---
 
 fn debug_check_status() {
-    println!("DEBUG: Checking Drive Status & LED Codes...");
+    println!("DEBUG: System Disk Audit & Configuration Map");
     let active_devices = get_active_holders();
     
-    println!("{:<8} | {:<8} | {:<8} | {:<8} | {:<8} | {}", "SLOT", "DEVICE", "COLOR", "REG", "VAL", "MESSAGE");
-    println!("{}", "-".repeat(80));
+    // 1. Gather all physically detected block devices
+    let mut detected_devices: HashSet<String> = HashSet::new();
+    if let Ok(entries) = fs::read_dir("/sys/block") {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Filter out obvious garbage if desired (e.g., loop, ram, but user asked for "everything found")
+            // We'll exclude minor numbered partitions if they show up in /sys/block (rare, usually partitions are in subdirs)
+            // But loop* and zram* are real devices. We'll show them.
+             if !name.starts_with("loop") {
+                detected_devices.insert(name);
+             }
+        }
+    }
 
+    // 2. Identify Expected Slots and Map them
+    let mut report_rows = Vec::new();
+    
+    // Map sys_name -> slot_name for quick lookup
+    let mut sys_to_slot = HashMap::new();
     for slot in SLOTS {
-        let (color, msg) = check_drive_status(slot, &active_devices);
-        let (reg, val) = get_i2c_codes(slot.slot_name, color);
+        sys_to_slot.insert(slot.sys_name.to_string(), slot.slot_name);
+    }
+
+    // Add all DETECTED devices to list
+    for sys_name in &detected_devices {
+        report_rows.push(sys_name.clone());
+    }
+    
+    // Add MISSING expected devices to list
+    for slot in SLOTS {
+        if !detected_devices.contains(slot.sys_name) {
+            report_rows.push(slot.sys_name.to_string());
+        }
+    }
+    
+    // Deduplicate (since detected might match expected)
+    report_rows.sort();
+    report_rows.dedup();
+
+    println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {}", "DEVICE", "MAPPED SLOT", "COLOR", "REG", "VAL", "MESSAGE");
+    println!("{}", "-".repeat(90));
+
+    for sys_name in report_rows {
+        // Determine Mapping
+        let slot_label = match sys_to_slot.get(&sys_name) {
+            Some(label) => *label,
+            None => "(Not Mapped)",
+        };
+
+        // Determine Status
+        let (color, msg) = check_drive_status_by_name(&sys_name, &active_devices);
         let msg_str = msg.unwrap_or_else(|| "".to_string());
-        
-        println!("{:<8} | {:<8} | {:<8?} | {:<8} | {:<8} | {}", 
-            slot.slot_name, 
-            slot.sys_name, 
+
+        // Determine Hardware Codes (Only if mapped, otherwise N/A)
+        let (reg, val) = if slot_label != "(Not Mapped)" {
+            get_i2c_codes(slot_label, color)
+        } else {
+            ("-", "-")
+        };
+
+        println!("{:<12} | {:<12} | {:<8?} | {:<8} | {:<8} | {}", 
+            sys_name, 
+            slot_label, 
             color, 
             reg,
             val,
@@ -158,8 +210,9 @@ fn debug_check_status() {
 
 // --- Status Logic ---
 
-fn check_drive_status(slot: &DriveSlot, active_devs: &HashSet<String>) -> (LedColor, Option<String>) {
-    let sys_path = format!("/sys/block/{}", slot.sys_name);
+// Updated to take just `sys_name` string so it works for unmapped devices too
+fn check_drive_status_by_name(sys_name: &str, active_devs: &HashSet<String>) -> (LedColor, Option<String>) {
+    let sys_path = format!("/sys/block/{}", sys_name);
     let path = Path::new(&sys_path);
 
     if !path.exists() {
@@ -176,7 +229,7 @@ fn check_drive_status(slot: &DriveSlot, active_devs: &HashSet<String>) -> (LedCo
         }
     }
 
-    if active_devs.contains(slot.sys_name) {
+    if active_devs.contains(sys_name) {
         return (LedColor::Green, Some("Drive is active/mounted".into()));
     }
 
@@ -185,19 +238,28 @@ fn check_drive_status(slot: &DriveSlot, active_devs: &HashSet<String>) -> (LedCo
 
 fn get_active_holders() -> HashSet<String> {
     let mut active = HashSet::new();
-    for slot in SLOTS {
-        let sys_path = format!("/sys/block/{}", slot.sys_name);
-        if has_entries(&format!("{}/holders", sys_path)) {
-            active.insert(slot.sys_name.to_string());
-            continue;
-        }
-        if let Ok(dir) = fs::read_dir(&sys_path) {
-            for entry in dir.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with(slot.sys_name) {
-                    if has_entries(&format!("{}/{}/holders", sys_path, name)) {
-                        active.insert(slot.sys_name.to_string());
-                        break;
+    // We scan ALL block devices in /sys/block to be comprehensive, 
+    // not just the anticipated SLOTS. This ensures `sda` (USB) shows as Active if mounted.
+    if let Ok(entries) = fs::read_dir("/sys/block") {
+        for entry in entries.flatten() {
+            let sys_name = entry.file_name().to_string_lossy().to_string();
+            let sys_path = format!("/sys/block/{}", sys_name);
+
+            // Check main holders
+            if has_entries(&format!("{}/holders", sys_path)) {
+                active.insert(sys_name.clone());
+                continue;
+            }
+
+            // Check partition holders
+            if let Ok(dir) = fs::read_dir(&sys_path) {
+                for sub in dir.flatten() {
+                    let sub_name = sub.file_name().to_string_lossy().to_string();
+                    if sub_name.starts_with(&sys_name) {
+                         if has_entries(&format!("{}/{}/holders", sys_path, sub_name)) {
+                            active.insert(sys_name.clone());
+                            break;
+                        }
                     }
                 }
             }
@@ -249,7 +311,7 @@ fn get_i2c_codes(slot_name: &str, color: LedColor) -> (&'static str, &'static st
 fn set_hardware_led(state: &LedState) -> Result<(), String> {
     let (reg, val) = get_i2c_codes(&state.device_slot, state.color);
 
-    if reg == "0x00" {
+    if reg == "0x00" || reg == "-" {
         return Ok(()); 
     }
 
