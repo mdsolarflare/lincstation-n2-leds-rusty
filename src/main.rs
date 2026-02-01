@@ -500,10 +500,19 @@ fn read_led_controller_state() -> LedControllerState {
             }
             if output.status.success() {
                 let result = String::from_utf8_lossy(&output.stdout);
-                eprintln!("    stdout: {}", result);
-                if let Ok(val) = u8::from_str_radix(result.trim(), 16) {
+                let trimmed = result.trim();
+                eprintln!("    stdout raw: '{}' (after trim: '{}')", result, trimmed);
+                // Strip "0x" prefix if present
+                let hex_str = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+                    &trimmed[2..]
+                } else {
+                    trimmed
+                };
+                if let Ok(val) = u8::from_str_radix(hex_str, 16) {
                     eprintln!("  Read 0x{:02X}: 0x{:02X}", addr, val);
                     registers.insert(addr, val);
+                } else {
+                    eprintln!("    Failed to parse hex: '{}'", hex_str);
                 }
             } else {
                 eprintln!("  Failed to read 0x{:02X}: status {:?}", addr, output.status);
