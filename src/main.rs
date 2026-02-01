@@ -21,7 +21,7 @@ enum LedColor {
     Green,
     Yellow,
     Red,
-} // ... (impl Default omitted for brevity, will be in full file)
+} 
 
 impl Default for LedColor {
     fn default() -> Self {
@@ -71,16 +71,12 @@ fn main() {
     if args.len() > 1 {
         match args[1].as_str() {
             "check-status" => debug_check_status(),
-            "check-leds" => debug_check_leds(),
             _ => {
-                eprintln!("Unknown command. Usage: ./lincstation-leds [check-status|check-leds]");
-                // Don't exit here, fallback to daemon mode or exit? 
-                // "keep it simple" -> print and run daemon? Or exit?
-                // Usually exit.
+                eprintln!("Unknown command. Usage: ./lincstation-leds [check-status]");
                 std::process::exit(1);
             }
         }
-        return; // Ensure we stop after debug command
+        return; 
     }
 
     println!("Starting LincStation LED Daemon...");
@@ -137,41 +133,24 @@ fn main() {
 // --- Debug Methods ---
 
 fn debug_check_status() {
-    println!("DEBUG: Checking Drive Status...");
+    println!("DEBUG: Checking Drive Status & LED Codes...");
     let active_devices = get_active_holders();
     
-    println!("{:<10} | {:<10} | {:<10} | {}", "SLOT", "DEVICE", "COLOR", "MESSAGE");
-    println!("{}", "-".repeat(60));
+    println!("{:<8} | {:<8} | {:<8} | {:<8} | {:<8} | {}", "SLOT", "DEVICE", "COLOR", "REG", "VAL", "MESSAGE");
+    println!("{}", "-".repeat(80));
 
     for slot in SLOTS {
         let (color, msg) = check_drive_status(slot, &active_devices);
+        let (reg, val) = get_i2c_codes(slot.slot_name, color);
         let msg_str = msg.unwrap_or_else(|| "".to_string());
-        println!("{:<10} | {:<10} | {:<10?} | {}", 
+        
+        println!("{:<8} | {:<8} | {:<8?} | {:<8} | {:<8} | {}", 
             slot.slot_name, 
             slot.sys_name, 
             color, 
+            reg,
+            val,
             msg_str
-        );
-    }
-    std::process::exit(0);
-}
-
-fn debug_check_leds() {
-    println!("DEBUG: Proposed LED States...");
-    let active_devices = get_active_holders();
-
-    println!("{:<10} | {:<10} | {:<8} | {:<8}", "SLOT", "COLOR", "REG", "VAL");
-    println!("{}", "-".repeat(50));
-
-    for slot in SLOTS {
-        let (color, _) = check_drive_status(slot, &active_devices);
-        let (reg, val) = get_i2c_codes(slot.slot_name, color);
-        
-        println!("{:<10} | {:<10?} | {:<8} | {:<8}", 
-            slot.slot_name, 
-            color, 
-            reg, 
-            val
         );
     }
     std::process::exit(0);
