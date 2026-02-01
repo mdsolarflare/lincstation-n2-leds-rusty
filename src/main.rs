@@ -425,7 +425,7 @@ fn find_i2c_bus() -> i32 {
         // We use i2cget to test for presence
         for bus_num in buses {
             eprintln!("  Probing bus {}...", bus_num);
-            let output = Command::new("i2cget")
+            let output = Command::new("/usr/sbin/i2cget")
                 .arg("-y")
                 .arg(bus_num.to_string())
                 .arg("0x26")
@@ -485,7 +485,7 @@ fn read_led_controller_state() -> LedControllerState {
     
     // Use i2cget command for SMBus reads (reliable, system has i2c-tools)
     for &addr in &reg_addrs {
-        let output = Command::new("i2cget")
+        let output = Command::new("/usr/sbin/i2cget")
             .arg("-y")
             .arg(bus.to_string())
             .arg("0x26")
@@ -494,8 +494,13 @@ fn read_led_controller_state() -> LedControllerState {
             .output();
         
         if let Ok(output) = output {
+            eprintln!("  i2cget status: {:?}", output.status);
+            if !output.stderr.is_empty() {
+                eprintln!("    stderr: {}", String::from_utf8_lossy(&output.stderr));
+            }
             if output.status.success() {
                 let result = String::from_utf8_lossy(&output.stdout);
+                eprintln!("    stdout: {}", result);
                 if let Ok(val) = u8::from_str_radix(result.trim(), 16) {
                     eprintln!("  Read 0x{:02X}: 0x{:02X}", addr, val);
                     registers.insert(addr, val);
@@ -504,7 +509,7 @@ fn read_led_controller_state() -> LedControllerState {
                 eprintln!("  Failed to read 0x{:02X}: status {:?}", addr, output.status);
             }
         } else {
-            eprintln!("  Error reading 0x{:02X}", addr);
+            eprintln!("  Error executing i2cget for 0x{:02X}", addr);
         }
     }
 
