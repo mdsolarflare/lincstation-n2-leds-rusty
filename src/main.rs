@@ -11,7 +11,6 @@ use chrono::Utc;
 // Configuration for your specific hardware
 // NOTE: You must update these I2C constants for your specific board!
 const LOG_PATH: &str = "/var/log/lincstation_leds.json";
-const I2C_BUS: &str = "11";
 const I2C_ADDRESS: &str = "0x26";
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -62,7 +61,26 @@ pub struct DiskStats {
     pub is_active: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct LedControllerState {
+    pub bus_number: i32,
+    pub found: bool,
+    pub registers: HashMap<u8, u8>,
+}
+
 const ACTIVITY_SAMPLE_INTERVAL_MS: u64 = 1000; // milliseconds
+
+// Mapping of LED slots to their control registers on the LED controller
+// Each register value encodes the LED color
+const LED_SLOT_REGISTERS: &[(&str, u8)] = &[
+    ("OS",     0x92),   // Register for OS LED
+    ("NVME0",  0x93),   // Register for NVME0 LED
+    ("NVME1",  0x94),   // Register for NVME1 LED
+    ("NVME2",  0x95),   // Register for NVME2 LED
+    ("NVME3",  0x96),   // Register for NVME3 LED
+    ("SATA0",  0x97),   // Register for SATA0 LED
+    ("SATA1",  0x98),   // Register for SATA1 LED
+];
 
 // Registry of all physical drive slots on the LincStation N2.
 const SLOTS: &[DriveSlot] = &[
@@ -280,9 +298,9 @@ fn debug_check_status() {
     report_rows.sort();
     report_rows.dedup();
 
-    println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {:<12} | {:<10} | {}", 
-        "DEVICE", "MAPPED SLOT", "COLOR", "REG", "VAL", "UTIL %", "I/O Active", "MESSAGE");
-    println!("{}", "-".repeat(120));
+    println!("{:<12} | {:<12} | {:<8} | {:<12} | {:<10} | {}", 
+        "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "I/O Active", "MESSAGE");
+    println!("{}", "-".repeat(100));
 
     for sys_name in report_rows {
         // Determine Mapping
@@ -294,13 +312,6 @@ fn debug_check_status() {
         // Determine Status
         let (color, msg) = check_drive_status_by_name(&sys_name);
         let msg_str = msg.unwrap_or_else(|| "".to_string());
-
-        // Determine Hardware Codes (Only if mapped, otherwise N/A)
-        let (reg, val) = if slot_label != "(Not Mapped)" {
-            get_i2c_codes(slot_label, color)
-        } else {
-            ("-", "-")
-        };
 
         // Get disk stats if available (includes all detected devices)
         let (util_str, io_active_str) = disk_stats
@@ -319,17 +330,48 @@ fn debug_check_status() {
             "-".to_string()
         };
 
-        println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {:<12} | {:<10} | {}", 
+        println!("{:<12} | {:<12} | {:<8} | {:<12} | {:<10} | {}", 
             sys_name, 
             slot_label, 
             color_display, 
-            reg,
-            val,
             util_str,
             io_active_str,
             msg_str
         );
     }
+
+    // 5. Fetch and display LED controller state
+    println!("\n--- LED Controller State ---");
+    let controller_state = read_led_controller_state();
+    if controller_state.found {
+        let bus_name = get_i2c_bus_name(controller_state.bus_number);
+        println!("LED Controller found on I2C bus {}: {}", controller_state.bus_number, bus_name);
+        
+        // Display current LED colors for each slot
+        println!("\nLED Colors:");
+        println!("{:<10} | {:<15} | {}", "SLOT", "REGISTER", "COLOR");
+        println!("{}", "-".repeat(40));
+        
+        for (slot_name, reg_addr) in LED_SLOT_REGISTERS {
+            let color_value = match controller_state.registers.get(reg_addr) {
+                Some(&val) => format!("0x{:02X}", val),
+                None => "N/A".to_string(),
+            };
+            println!("{:<10} | 0x{:02X}        | {}", slot_name, reg_addr, color_value);
+        }
+        
+        // Display raw register values for debugging
+        println!("\nRaw Register Values (hex):");
+        let mut reg_addresses: Vec<_> = controller_state.registers.keys().collect();
+        reg_addresses.sort();
+        for addr in reg_addresses {
+            let val = controller_state.registers[addr];
+            println!("  0x{:02X}: 0x{:02X}", addr, val);
+        }
+    } else {
+        println!("LED Controller NOT found on any I2C bus");
+    }
+
     std::process::exit(0);
 }
 
@@ -355,6 +397,89 @@ fn check_drive_status_by_name(sys_name: &str) -> (LedColor, Option<String>) {
     }
 
     (LedColor::Blue, Some("Drive present".into()))
+}
+
+// --- I2C LED Controller Functions ---
+
+/// Find the I2C bus that has the LED controller at address 0x26
+/// Uses the sysfs approach: scans /sys/class/i2c-dev/ and checks /sys/bus/i2c/devices/
+fn find_i2c_bus() -> i32 {
+    // Scan /sys/class/i2c-dev/ for all I2C bus entries
+    if let Ok(entries) = fs::read_dir("/sys/class/i2c-dev") {
+        for entry in entries.flatten() {
+            if let Ok(file_name) = entry.file_name().into_string() {
+                // Extract bus number from entry name (i2c-N)
+                if let Some(bus_str) = file_name.strip_prefix("i2c-") {
+                    if let Ok(bus_num) = bus_str.parse::<u32>() {
+                        // Check if LED controller device exists on this bus
+                        // Device path: /sys/bus/i2c/devices/<bus>-0026/
+                        let device_path = format!("/sys/bus/i2c/devices/{}-0026", bus_num);
+                        if Path::new(&device_path).exists() {
+                            return bus_num as i32;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    -1 // Not found
+}
+
+/// Get human-readable name for the I2C bus
+fn get_i2c_bus_name(bus_num: i32) -> String {
+    let name_path = format!("/sys/class/i2c-dev/i2c-{}/device/name", bus_num);
+    if let Ok(content) = fs::read_to_string(name_path) {
+        content.trim().to_string()
+    } else {
+        format!("I2C Bus {}", bus_num)
+    }
+}
+
+/// Read registers from the LED controller via SMBus
+/// Falls back to i2cget command for reliability
+fn read_led_controller_state() -> LedControllerState {
+    let bus = find_i2c_bus();
+    
+    if bus < 0 {
+        return LedControllerState {
+            bus_number: -1,
+            found: false,
+            registers: HashMap::new(),
+        };
+    }
+
+    let mut registers = HashMap::new();
+    
+    // Read key registers from the controller
+    // Based on the research: 0x50, 0x90 (mode), 0x91 (brightness), 0x95-0x97 (color1 RGB), 
+    // 0x98-0x9A (color2 RGB), 0xA0 (on state), 0xB0 (off state)
+    let reg_addrs = vec![0x50, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA0, 0xB0];
+    
+    // Use i2cget command for SMBus reads (reliable, system has i2c-tools)
+    for &addr in &reg_addrs {
+        let output = Command::new("i2cget")
+            .arg("-y")
+            .arg(bus.to_string())
+            .arg("0x26")
+            .arg(format!("0x{:02x}", addr))
+            .arg("b")
+            .output();
+        
+        if let Ok(output) = output {
+            if output.status.success() {
+                let result = String::from_utf8_lossy(&output.stdout);
+                if let Ok(val) = u8::from_str_radix(result.trim(), 16) {
+                    registers.insert(addr, val);
+                }
+            }
+        }
+    }
+
+    LedControllerState {
+        bus_number: bus,
+        found: !registers.is_empty(),
+        registers,
+    }
 }
 
 // --- Hardware Control ---
@@ -398,7 +523,7 @@ fn set_hardware_led(state: &LedState) -> Result<(), String> {
     }
 
     let status = Command::new("i2cset")
-        .args(&["-y", I2C_BUS, I2C_ADDRESS, reg, val])
+        .args(&["-y", "TODO", I2C_ADDRESS, reg, val])
         .status()
         .map_err(|e| e.to_string())?;
 
