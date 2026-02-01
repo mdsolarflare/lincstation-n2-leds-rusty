@@ -10,3 +10,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 i2cdev = "0.6"  # For I2C/SMBus (Arch has `i2c-tools` for fallback)
 sysfs_gpio = "0.6"  # Optional, if GPIO is needed
+chrono = { version = "0.4", features = ["serde"] }
