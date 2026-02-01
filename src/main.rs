@@ -402,22 +402,36 @@ fn check_drive_status_by_name(sys_name: &str) -> (LedColor, Option<String>) {
 // --- I2C LED Controller Functions ---
 
 /// Find the I2C bus that has the LED controller at address 0x26
-/// Uses the sysfs approach: scans /sys/class/i2c-dev/ and checks /sys/bus/i2c/devices/
+/// Probes each I2C bus by attempting to read a register from address 0x26
 fn find_i2c_bus() -> i32 {
     // Scan /sys/class/i2c-dev/ for all I2C bus entries
     if let Ok(entries) = fs::read_dir("/sys/class/i2c-dev") {
+        let mut buses: Vec<u32> = Vec::new();
         for entry in entries.flatten() {
             if let Ok(file_name) = entry.file_name().into_string() {
                 // Extract bus number from entry name (i2c-N)
                 if let Some(bus_str) = file_name.strip_prefix("i2c-") {
                     if let Ok(bus_num) = bus_str.parse::<u32>() {
-                        // Check if LED controller device exists on this bus
-                        // Device path: /sys/bus/i2c/devices/<bus>-0026/
-                        let device_path = format!("/sys/bus/i2c/devices/{}-0026", bus_num);
-                        if Path::new(&device_path).exists() {
-                            return bus_num as i32;
-                        }
+                        buses.push(bus_num);
                     }
+                }
+            }
+        }
+        
+        // Try to probe address 0x26 on each bus to find the LED controller
+        // We use i2cget to test for presence
+        for bus_num in buses {
+            let output = Command::new("i2cget")
+                .arg("-y")
+                .arg(bus_num.to_string())
+                .arg("0x26")
+                .arg("0x50")
+                .arg("b")
+                .output();
+            
+            if let Ok(output) = output {
+                if output.status.success() {
+                    return bus_num as i32;
                 }
             }
         }
