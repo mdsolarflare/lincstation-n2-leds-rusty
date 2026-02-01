@@ -101,11 +101,9 @@ fn main() {
     };
 
     loop {
-        let active_devices = get_active_holders();
-
         let mut new_states = Vec::new();
         for slot in SLOTS {
-            let (color, msg) = check_drive_status_by_name(slot.sys_name, &active_devices);
+            let (color, msg) = check_drive_status_by_name(slot.sys_name);
             
             let state = LedState {
                 timestamp: get_iso_timestamp(),
@@ -227,23 +225,37 @@ pub fn read_disk_stats(disks: &mut [DiskStats]) -> io::Result<()> {
 
 fn debug_check_status() {
     println!("DEBUG: System Disk Audit & Configuration Map");
-    let active_devices = get_active_holders();
     
     // 1. Gather all physically detected block devices
     let mut detected_devices: HashSet<String> = HashSet::new();
     if let Ok(entries) = fs::read_dir("/sys/block") {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            // Filter out obvious garbage if desired (e.g., loop, ram, but user asked for "everything found")
-            // We'll exclude minor numbered partitions if they show up in /sys/block (rare, usually partitions are in subdirs)
-            // But loop* and zram* are real devices. We'll show them.
-             if !name.starts_with("loop") {
+            if !name.starts_with("loop") {
                 detected_devices.insert(name);
-             }
+            }
         }
     }
 
-    // 2. Identify Expected Slots and Map them
+    // 2. Initialize DiskStats for ALL detected devices (for comprehensive debug info)
+    let mut disk_stats: Vec<DiskStats> = detected_devices
+        .iter()
+        .map(|device| DiskStats {
+            device_name: device.clone(),
+            prev_read_sectors: 0,
+            prev_write_sectors: 0,
+            prev_write_time: 0,
+            utilization_percent: 0.0,
+            is_active: false,
+        })
+        .collect();
+
+    // 3. Read disk stats from /proc/diskstats
+    if let Err(e) = read_disk_stats(&mut disk_stats) {
+        eprintln!("Warning: Failed to read disk stats: {}", e);
+    }
+
+    // 4. Identify Expected Slots and Map them
     let mut report_rows = Vec::new();
     
     // Map sys_name -> slot_name for quick lookup
@@ -264,12 +276,13 @@ fn debug_check_status() {
         }
     }
     
-    // Deduplicate (since detected might match expected)
+    // Deduplicate and sort (since detected might match expected)
     report_rows.sort();
     report_rows.dedup();
 
-    println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {}", "DEVICE", "MAPPED SLOT", "COLOR", "REG", "VAL", "MESSAGE");
-    println!("{}", "-".repeat(90));
+    println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {:<12} | {:<10} | {}", 
+        "DEVICE", "MAPPED SLOT", "COLOR", "REG", "VAL", "UTIL %", "I/O Active", "MESSAGE");
+    println!("{}", "-".repeat(120));
 
     for sys_name in report_rows {
         // Determine Mapping
@@ -279,7 +292,7 @@ fn debug_check_status() {
         };
 
         // Determine Status
-        let (color, msg) = check_drive_status_by_name(&sys_name, &active_devices);
+        let (color, msg) = check_drive_status_by_name(&sys_name);
         let msg_str = msg.unwrap_or_else(|| "".to_string());
 
         // Determine Hardware Codes (Only if mapped, otherwise N/A)
@@ -289,20 +302,31 @@ fn debug_check_status() {
             ("-", "-")
         };
 
+        // Get disk stats if available (includes all detected devices)
+        let (util_str, io_active_str) = disk_stats
+            .iter()
+            .find(|ds| ds.device_name == sys_name)
+            .map(|ds| (
+                format!("{:.1}%", ds.utilization_percent),
+                if ds.is_active { "Yes" } else { "No" }.to_string(),
+            ))
+            .unwrap_or_else(|| ("N/A".to_string(), "N/A".to_string()));
+
         // UI Fix: Don't show an LED color for unmapped drives, it's confusing.
-        // We converts the color enum to string, or use "-" if not mapped.
         let color_display = if slot_label != "(Not Mapped)" {
             format!("{:?}", color)
         } else {
             "-".to_string()
         };
 
-        println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {}", 
+        println!("{:<12} | {:<12} | {:<8} | {:<8} | {:<8} | {:<12} | {:<10} | {}", 
             sys_name, 
             slot_label, 
             color_display, 
             reg,
             val,
+            util_str,
+            io_active_str,
             msg_str
         );
     }
@@ -311,8 +335,8 @@ fn debug_check_status() {
 
 // --- Status Logic ---
 
-// Updated to take just `sys_name` string so it works for unmapped devices too
-fn check_drive_status_by_name(sys_name: &str, active_devs: &HashSet<String>) -> (LedColor, Option<String>) {
+// Check drive status based on device state and file existence
+fn check_drive_status_by_name(sys_name: &str) -> (LedColor, Option<String>) {
     let sys_path = format!("/sys/block/{}", sys_name);
     let path = Path::new(&sys_path);
 
@@ -330,50 +354,7 @@ fn check_drive_status_by_name(sys_name: &str, active_devs: &HashSet<String>) -> 
         }
     }
 
-    if active_devs.contains(sys_name) {
-        return (LedColor::Green, Some("Drive is active/mounted".into()));
-    }
-
-    (LedColor::Blue, Some("Drive idle/unmounted".into()))
-}
-
-fn get_active_holders() -> HashSet<String> {
-    let mut active = HashSet::new();
-    // We scan ALL block devices in /sys/block to be comprehensive, 
-    // not just the anticipated SLOTS. This ensures `sda` (USB) shows as Active if mounted.
-    if let Ok(entries) = fs::read_dir("/sys/block") {
-        for entry in entries.flatten() {
-            let sys_name = entry.file_name().to_string_lossy().to_string();
-            let sys_path = format!("/sys/block/{}", sys_name);
-
-            // Check main holders
-            if has_entries(&format!("{}/holders", sys_path)) {
-                active.insert(sys_name.clone());
-                continue;
-            }
-
-            // Check partition holders
-            if let Ok(dir) = fs::read_dir(&sys_path) {
-                for sub in dir.flatten() {
-                    let sub_name = sub.file_name().to_string_lossy().to_string();
-                    if sub_name.starts_with(&sys_name) {
-                         if has_entries(&format!("{}/{}/holders", sys_path, sub_name)) {
-                            active.insert(sys_name.clone());
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    active
-}
-
-fn has_entries(path: &str) -> bool {
-    if let Ok(mut dir) = fs::read_dir(path) {
-        return dir.next().is_some();
-    }
-    false
+    (LedColor::Blue, Some("Drive present".into()))
 }
 
 // --- Hardware Control ---
