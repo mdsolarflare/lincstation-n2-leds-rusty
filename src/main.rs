@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, HashMap};
 use std::env;
 use std::fs;
+use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 use std::process::Command;
 use chrono::Utc;
@@ -50,6 +51,18 @@ struct DriveSlot {
     slot_name: &'static str,
     sys_name: &'static str,
 }
+
+#[derive(Debug, Clone)]
+pub struct DiskStats {
+    pub device_name: String,
+    pub prev_read_sectors: u64,
+    pub prev_write_sectors: u64,
+    pub prev_write_time: u64,
+    pub utilization_percent: f64,
+    pub is_active: bool,
+}
+
+const ACTIVITY_SAMPLE_INTERVAL_MS: u64 = 1000; // milliseconds
 
 // Registry of all physical drive slots on the LincStation N2.
 const SLOTS: &[DriveSlot] = &[
@@ -128,6 +141,86 @@ fn main() {
 
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
+}
+
+pub fn read_disk_stats(disks: &mut [DiskStats]) -> io::Result<()> {
+    // Read disk statistics from /proc/diskstats
+    // See spec at https://www.kernel.org/doc/html/latest/admin-guide/iostats.html
+    let file = fs::File::open("/proc/diskstats")?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = line?;
+        let parts: Vec<&str> = line.split_whitespace().collect();
+
+        if parts.len() < 14 {
+            continue;
+        }
+
+        // Parse the fields according to kernel documentation
+        let _major = parts[0].parse::<u32>().unwrap_or(0);
+        let _minor = parts[1].parse::<u32>().unwrap_or(0);
+        let device_name = parts[2];
+
+        // Skip partition stats (minor > 0) for simplicity
+        if _minor > 0 {
+            continue;
+        }
+
+        // Parse the I/O statistics fields from /proc/diskstats
+        let _reads = parts[3].parse::<u64>().unwrap_or(0);
+        let _reads_merged = parts[4].parse::<u64>().unwrap_or(0);
+        let read_sectors = parts[5].parse::<u64>().unwrap_or(0);
+        let _read_time = parts[6].parse::<u64>().unwrap_or(0);
+        let _writes = parts[7].parse::<u64>().unwrap_or(0);
+        let _writes_merged = parts[8].parse::<u64>().unwrap_or(0);
+        let write_sectors = parts[9].parse::<u64>().unwrap_or(0);
+        let _write_time = parts[10].parse::<u64>().unwrap_or(0);
+        let _io_in_progress = parts[11].parse::<u64>().unwrap_or(0);
+        let io_time = parts[12].parse::<u64>().unwrap_or(0);
+        let _weighted_io_time = parts[13].parse::<u64>().unwrap_or(0);
+
+        // Find matching disk in our array
+        for disk in disks.iter_mut() {
+            if disk.device_name == device_name {
+                // Calculate utilization based on I/O time
+                let mut time_diff = io_time as i64 - disk.prev_write_time as i64;
+                
+                if time_diff < 0 {
+                    // overflow: handle wrapping of u64
+                    time_diff += u64::MAX as i64;
+                }
+                
+                if time_diff >= 0 {
+                    let time_diff_f64 = time_diff as f64;
+                    // time_diff is in milliseconds, convert to microseconds and calculate percentage
+                    disk.utilization_percent = time_diff_f64
+                        * 1000.0  // convert from milliseconds to microseconds
+                        / ACTIVITY_SAMPLE_INTERVAL_MS as f64
+                        * 100.0;  // convert to percentage
+                    
+                    if disk.utilization_percent > 100.0 {
+                        disk.utilization_percent = 100.0;
+                    }
+                } else if time_diff <= 0 {
+                    // overflow case - leave utilization as is or set to 0
+                }
+
+                // Check for activity (sectors read/written changed)
+                disk.is_active = read_sectors != disk.prev_read_sectors ||
+                                write_sectors != disk.prev_write_sectors;
+
+                // Update previous values
+                disk.prev_read_sectors = read_sectors;
+                disk.prev_write_sectors = write_sectors;
+                disk.prev_write_time = io_time;
+
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // --- Debug Methods ---
@@ -289,7 +382,7 @@ fn has_entries(path: &str) -> bool {
 fn get_i2c_codes(slot_name: &str, color: LedColor) -> (&'static str, &'static str) {
     match (slot_name, color) {
         // OS Drive (Position 1)
-        ("OS", LedColor::White) => ("0xA1", "0x01"), 
+        ("OS", LedColor::White) => ("0xA1", "0x01"),
         ("OS", LedColor::Blue)  => ("0xA1", "0x02"), // Example
         ("OS", LedColor::Green) => ("0xA1", "0x03"), // Example
         ("OS", LedColor::Red)   => ("0xB1", "0x01"), // Example
@@ -299,7 +392,7 @@ fn get_i2c_codes(slot_name: &str, color: LedColor) -> (&'static str, &'static st
 
         // NVME1 (Position 3)
         ("NVME1", _) => ("0x00", "0x00"), // TODO: Fill in
-        
+
         // NVME2 (Position 4)
         ("NVME2", _) => ("0x00", "0x00"), // TODO: Fill in
 
@@ -311,7 +404,7 @@ fn get_i2c_codes(slot_name: &str, color: LedColor) -> (&'static str, &'static st
 
         // SATA1 (Position 7)
         ("SATA1", _) => ("0x00", "0x00"), // TODO: Fill in
-        
+
         (_, _) => ("0x00", "0x00"), // Skip unmapped
     }
 }
@@ -320,7 +413,7 @@ fn set_hardware_led(state: &LedState) -> Result<(), String> {
     let (reg, val) = get_i2c_codes(&state.device_slot, state.color);
 
     if reg == "0x00" || reg == "-" {
-        return Ok(()); 
+        return Ok(());
     }
 
     let status = Command::new("i2cset")
