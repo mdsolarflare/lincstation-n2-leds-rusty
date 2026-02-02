@@ -97,7 +97,7 @@ fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, Option<String>) 
 
 fn debug_check_status() {
     println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
-    println!("║          LincStation N2 LED Daemon - Debug Status Report            ║");
+    println!("║          LincStation N2 LED Daemon - Debug Status Report              ║");
     println!("╚═══════════════════════════════════════════════════════════════════════╝\n");
     
     // ========== DISK STATUS SERVICE ==========
@@ -122,8 +122,8 @@ fn debug_check_status() {
         sys_to_slot.insert(slot.sys_name.to_string(), slot.slot_name);
     }
 
-    println!("{:<12} | {:<12} | {:<8} | {:<12} | {:<10} | {}", 
-        "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "I/O Active", "MESSAGE");
+    println!("{:<12} | {:<12} | {:<8} | {:<12} | {}", 
+        "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "MESSAGE");
     println!("{}", "-".repeat(100));
 
     for sys_name in report_rows {
@@ -139,14 +139,11 @@ fn debug_check_status() {
         let msg_str = msg.unwrap_or_else(|| "".to_string());
 
         // Get disk stats if available
-        let (util_str, io_active_str) = disk_stats
+        let util_str = disk_stats
             .iter()
             .find(|ds| ds.device_name == sys_name)
-            .map(|ds| (
-                format!("{:.1}%", ds.utilization_percent),
-                if ds.is_active { "Yes" } else { "No" }.to_string(),
-            ))
-            .unwrap_or_else(|| ("N/A".to_string(), "N/A".to_string()));
+            .map(|ds| format!("{:.1}%", ds.utilization_percent))
+            .unwrap_or_else(|| "N/A".to_string());
 
         // Don't show LED color for unmapped drives
         let color_display = if slot_label != "(Not Mapped)" {
@@ -155,12 +152,11 @@ fn debug_check_status() {
             "-".to_string()
         };
 
-        println!("{:<12} | {:<12} | {:<8} | {:<12} | {:<10} | {}", 
+        println!("{:<12} | {:<12} | {:<8} | {:<12} | {}", 
             sys_name, 
             slot_label, 
             color_display, 
             util_str,
-            io_active_str,
             msg_str
         );
     }
