@@ -124,7 +124,7 @@ fn debug_check_status() {
 
     println!("{:<12} | {:<12} | {:<8} | {:<12} | {}", 
         "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "MESSAGE");
-    println!("{}", "-".repeat(100));
+    println!("{}", "-".repeat(73)); // This should align with the surrounding column sizes.
 
     for sys_name in report_rows {
         // Determine Mapping
