@@ -96,7 +96,12 @@ fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, Option<String>) 
 // --- Debug Methods ---
 
 fn debug_check_status() {
-    println!("DEBUG: System Disk Audit & Configuration Map");
+    println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
+    println!("║          LincStation N2 LED Daemon - Debug Status Report            ║");
+    println!("╚═══════════════════════════════════════════════════════════════════════╝\n");
+    
+    // ========== DISK STATUS SERVICE ==========
+    println!("┌─ Disk Status Service ─────────────────────────────────────────────────┐");
     
     // 1. Detect all devices and read their stats
     let disk_stats = match detect_all_devices() {
@@ -159,16 +164,18 @@ fn debug_check_status() {
             msg_str
         );
     }
+    
+    println!("└───────────────────────────────────────────────────────────────────────┘\n");
 
-    // 4. Fetch and display LED controller state
-    println!("\n--- LED Controller State ---");
+    // ========== LED CONTROLLER SERVICE ==========
+    println!("┌─ LED Controller Service ──────────────────────────────────────────────┐");
     let controller_state = read_led_controller_state();
     if controller_state.found {
         let bus_name = get_i2c_bus_name(controller_state.bus_number);
-        println!("LED Controller found on I2C bus {}: {}", controller_state.bus_number, bus_name);
+        println!("✓ LED Controller found on I2C bus {}: {}\n", controller_state.bus_number, bus_name);
         
         // Display LED Bar state
-        println!("\nLED Bar (Chassis):");
+        println!("LED Bar (Chassis):");
         println!("  Mode: 0x{:02X} (0=solid, 1=breath, 2=loop)", 
             controller_state.registers.get(&0x90).unwrap_or(&0));
         println!("  Brightness: 0x{:02X}", 
@@ -190,7 +197,7 @@ fn debug_check_status() {
             controller_state.registers.get(&0xB1).unwrap_or(&0));
         
         // Display raw register values for debugging
-        println!("\nRaw Register Values (hex):");
+        println!("\nRaw Register Values:");
         let mut reg_addresses: Vec<_> = controller_state.registers.keys().collect();
         reg_addresses.sort();
         for addr in reg_addresses {
@@ -198,8 +205,13 @@ fn debug_check_status() {
             println!("  0x{:02X}: 0x{:02X}", addr, val);
         }
     } else {
-        println!("LED Controller NOT found on any I2C bus");
+        println!("✗ LED Controller NOT found on any I2C bus\n");
+        println!("Debug Info:");
+        println!("  - Searched /sys/class/i2c-dev for available buses");
+        println!("  - Probed address 0x26 on each bus using i2cget");
+        println!("  - Ensure i2c-tools is installed: apt install i2c-tools");
     }
+    println!("└───────────────────────────────────────────────────────────────────────┘\n");
 
     std::process::exit(0);
 }
