@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::process::Command;
+use i2cdev::linux::LinuxI2CDevice;
+use i2cdev::core::I2CDevice;
 
 /// LED color enumeration with standard palette
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -113,16 +114,10 @@ pub fn find_i2c_bus() -> i32 {
         
         buses.sort();
         for bus_num in buses {
-            let output = Command::new("/usr/sbin/i2cget")
-                .arg("-y")
-                .arg(bus_num.to_string())
-                .arg("0x26")
-                .arg("0x50")
-                .arg("b")
-                .output();
-            
-            if let Ok(output) = output {
-                if output.status.success() {
+            let dev_path = format!("/dev/i2c-{}", bus_num);
+            if let Ok(mut device) = LinuxI2CDevice::new(&dev_path, 0x26) {
+                // Try to read a register to verify the device exists
+                if device.smbus_read_byte_data(0x50).is_ok() {
                     return bus_num as i32;
                 }
             }
@@ -142,7 +137,6 @@ pub fn get_i2c_bus_name(bus_num: i32) -> String {
 }
 
 /// Read registers from the LED controller via SMBus
-/// Falls back to i2cget command for reliability
 pub fn read_led_controller_state() -> LedControllerState {
     let bus = find_i2c_bus();
     if bus < 0 {
@@ -150,27 +144,14 @@ pub fn read_led_controller_state() -> LedControllerState {
     }
 
     let mut registers = HashMap::new();
-    let reg_addrs = vec![0x50, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA0, 0xB0];
+    let dev_path = format!("/dev/i2c-{}", bus);
     
-    for &addr in &reg_addrs {
-        if let Ok(output) = Command::new("/usr/sbin/i2cget")
-            .arg("-y")
-            .arg(bus.to_string())
-            .arg("0x26")
-            .arg(format!("0x{:02x}", addr))
-            .arg("b")
-            .output()
-        {
-            if output.status.success() {
-                let trimmed = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let hex_str = if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-                    &trimmed[2..]
-                } else {
-                    &trimmed
-                };
-                if let Ok(val) = u8::from_str_radix(hex_str, 16) {
-                    registers.insert(addr, val);
-                }
+    if let Ok(mut device) = LinuxI2CDevice::new(&dev_path, 0x26) {
+        let reg_addrs = vec![0x50, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9A, 0xA0, 0xB0];
+        
+        for &addr in &reg_addrs {
+            if let Ok(val) = device.smbus_read_byte_data(addr) {
+                registers.insert(addr, val);
             }
         }
     }
@@ -180,76 +161,38 @@ pub fn read_led_controller_state() -> LedControllerState {
 
 /// Set LED bar mode (solid, breath, loop)
 pub fn set_led_bar_mode(bus: i32, mode: LedBarMode) -> Result<(), String> {
-    Command::new("/usr/sbin/i2cset")
-        .arg("-y")
-        .arg(bus.to_string())
-        .arg("0x26")
-        .arg("0x90")
-        .arg(format!("0x{:02x}", mode as u8))
-        .arg("b")
-        .status()
-        .map_err(|e| e.to_string())
-        .and_then(|status| {
-            if status.success() { Ok(()) } else { Err("i2cset failed".into()) }
-        })
+    let dev_path = format!("/dev/i2c-{}", bus);
+    let mut device = LinuxI2CDevice::new(&dev_path, 0x26)
+        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+    
+    device.smbus_write_byte_data(0x90, mode as u8)
+        .map_err(|e| format!("Failed to set LED bar mode: {}", e))
 }
 
 /// Set LED bar brightness (0-255)
 pub fn set_led_bar_brightness(bus: i32, brightness: u8) -> Result<(), String> {
-    Command::new("/usr/sbin/i2cset")
-        .arg("-y")
-        .arg(bus.to_string())
-        .arg("0x26")
-        .arg("0x91")
-        .arg(format!("0x{:02x}", brightness))
-        .arg("b")
-        .status()
-        .map_err(|e| e.to_string())
-        .and_then(|status| {
-            if status.success() { Ok(()) } else { Err("i2cset failed".into()) }
-        })
+    let dev_path = format!("/dev/i2c-{}", bus);
+    let mut device = LinuxI2CDevice::new(&dev_path, 0x26)
+        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+    
+    device.smbus_write_byte_data(0x91, brightness)
+        .map_err(|e| format!("Failed to set LED bar brightness: {}", e))
 }
 
 /// Set LED bar RGB color
 pub fn set_led_bar_color(bus: i32, red: u8, green: u8, blue: u8) -> Result<(), String> {
-    Command::new("/usr/sbin/i2cset")
-        .arg("-y")
-        .arg(bus.to_string())
-        .arg("0x26")
-        .arg("0x92")
-        .arg(format!("0x{:02x}", red))
-        .arg("b")
-        .status()
-        .map_err(|e| e.to_string())
-        .and_then(|status| {
-            if !status.success() { return Err("i2cset 0x92 failed".into()); }
-            
-            Command::new("/usr/sbin/i2cset")
-                .arg("-y")
-                .arg(bus.to_string())
-                .arg("0x26")
-                .arg("0x93")
-                .arg(format!("0x{:02x}", green))
-                .arg("b")
-                .status()
-                .map_err(|e| e.to_string())
-                .and_then(|status| {
-                    if !status.success() { return Err("i2cset 0x93 failed".into()); }
-                    
-                    Command::new("/usr/sbin/i2cset")
-                        .arg("-y")
-                        .arg(bus.to_string())
-                        .arg("0x26")
-                        .arg("0x94")
-                        .arg(format!("0x{:02x}", blue))
-                        .arg("b")
-                        .status()
-                        .map_err(|e| e.to_string())
-                        .and_then(|status| {
-                            if status.success() { Ok(()) } else { Err("i2cset 0x94 failed".into()) }
-                        })
-                })
-        })
+    let dev_path = format!("/dev/i2c-{}", bus);
+    let mut device = LinuxI2CDevice::new(&dev_path, 0x26)
+        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+    
+    device.smbus_write_byte_data(0x92, red)
+        .map_err(|e| format!("Failed to set red channel: {}", e))?;
+    
+    device.smbus_write_byte_data(0x93, green)
+        .map_err(|e| format!("Failed to set green channel: {}", e))?;
+    
+    device.smbus_write_byte_data(0x94, blue)
+        .map_err(|e| format!("Failed to set blue channel: {}", e))
 }
 
 /// Apply full LED bar configuration
