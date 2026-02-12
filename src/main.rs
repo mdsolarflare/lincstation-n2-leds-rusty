@@ -7,14 +7,18 @@ use chrono::Utc;
 
 mod services;
 use services::disk_status::{check_drive_status, detect_all_devices, build_device_report_list, DriveStatus, SLOTS};
-use services::led_controller::{LedColor, LedState, read_led_controller_state, get_i2c_bus_name};
+use services::led_controller::{
+    LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
+    execute_command, test_all_lights_off, test_all_lights_white, test_all_lights_red,
+    read_led_bar_registers, LED_STRIP_NAMES,
+};
 
 // Configuration for your specific hardware
 const LOG_PATH: &str = "/var/log/lincstation_leds.json";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct LedLog {
-    leds: Vec<LedState>,
+    leds: Vec<String>,  // TODO: Update when daemon loop is implemented
     last_updated: String,
 }
 
@@ -25,8 +29,20 @@ fn main() {
     if args.len() > 1 {
         match args[1].as_str() {
             "check-status" => debug_check_status(),
+            "test-all-off" => {
+                let bus = parse_bus_arg(&args);
+                test_command("All Lights Off", bus, test_all_lights_off());
+            }
+            "test-all-white" => {
+                let bus = parse_bus_arg(&args);
+                test_command("All Lights White", bus, test_all_lights_white());
+            }
+            "test-all-red" => {
+                let bus = parse_bus_arg(&args);
+                test_command("All Lights Red", bus, test_all_lights_red());
+            }
             _ => {
-                eprintln!("Unknown command. Usage: ./lincstation-leds [check-status]");
+                eprintln!("Usage: ./lincstation-leds [check-status|test-all-off|test-all-white|test-all-red] [--bus N]");
                 std::process::exit(1);
             }
         }
@@ -34,52 +50,10 @@ fn main() {
     }
 
     println!("Starting LincStation LED Daemon...");
+    println!("Tip: Use 'check-status' to debug, or test-all-off/test-all-white/test-all-red to test LEDs");
     
-    // Initial loop state
-    let mut led_log = LedLog {
-        leds: Vec::new(),
-        last_updated: get_iso_timestamp(),
-    };
-
-    loop {
-        let mut new_states = Vec::new();
-        for slot in SLOTS {
-            let status = check_drive_status(slot.sys_name);
-            let (color, msg) = drive_status_to_led_color(status);
-            
-            let state = LedState {
-                timestamp: get_iso_timestamp(),
-                device_slot: slot.slot_name.to_string(),
-                sys_name: slot.sys_name.to_string(),
-                color,
-                last_error: msg,
-            };
-            
-            // Optimization: check previous state
-            let mut should_update = true;
-            if let Some(old) = led_log.leds.iter().find(|l| l.device_slot == slot.slot_name) {
-                if old.color == color {
-                    should_update = false;
-                }
-            }
-
-            if should_update {
-                // TODO: Implement proper LED control based on drive status
-                // For now, placeholder
-            }
-
-            new_states.push(state);
-        }
-
-        led_log.leds = new_states;
-        led_log.last_updated = get_iso_timestamp();
-        
-        if let Err(e) = write_led_log(&led_log, LOG_PATH) {
-            eprintln!("Failed to write log: {}", e);
-        }
-
-        std::thread::sleep(std::time::Duration::from_secs(2));
-    }
+    // TODO: Implement main daemon loop
+    println!("(Daemon loop not yet implemented)");
 }
 
 
@@ -165,60 +139,55 @@ fn debug_check_status() {
 
     // ========== LED CONTROLLER SERVICE ==========
     println!("┌─ LED Controller Service ──────────────────────────────────────────────┐");
-    let controller_state = read_led_controller_state();
-    if controller_state.found {
-        let bus_name = get_i2c_bus_name(controller_state.bus_number);
-        println!("✓ LED Controller found on I2C bus {}: {}\n", controller_state.bus_number, bus_name);
-        
-        // Display LED Bar state
-        println!("LED Bar (Chassis):");
-        println!("  Mode: 0x{:02X} (0=solid, 1=breath, 2=loop)", 
-            controller_state.registers.get(&0x90).unwrap_or(&0));
-        println!("  Brightness: 0x{:02X}", 
-            controller_state.registers.get(&0x91).unwrap_or(&0));
-        println!("  Color RGB: R=0x{:02X} G=0x{:02X} B=0x{:02X}",
-            controller_state.registers.get(&0x92).unwrap_or(&0),
-            controller_state.registers.get(&0x93).unwrap_or(&0),
-            controller_state.registers.get(&0x94).unwrap_or(&0));
-        
-        // Display switch LED and strips state
-        println!("\nSwitch/Strip Controls:");
-        println!("  On bits (0xA0):  0x{:02X}", 
-            controller_state.registers.get(&0xA0).unwrap_or(&0));
-        println!("  Off bits (0xB0): 0x{:02X}", 
-            controller_state.registers.get(&0xB0).unwrap_or(&0));
-        println!("  On bits (0xA1):  0x{:02X} (NVME strips)", 
-            controller_state.registers.get(&0xA1).unwrap_or(&0));
-        println!("  Off bits (0xB1): 0x{:02X} (NVME strips)", 
-            controller_state.registers.get(&0xB1).unwrap_or(&0));
-        
-        // Display raw register values for debugging
-        println!("\nRaw Register Values:");
-        let mut reg_addresses: Vec<_> = controller_state.registers.keys().collect();
-        reg_addresses.sort();
-        for addr in reg_addresses {
-            let val = controller_state.registers[addr];
-            println!("  0x{:02X}: 0x{:02X}", addr, val);
+    
+    let bus = match find_i2c_bus() {
+        Some(b) => b,
+        None => {
+            println!("✗ LED Controller NOT found");
+            println!("  Searched /sys/class/i2c-dev for device at address 0x26");
+            println!("  Tip: Check I2C connection or use --bus to specify manually");
+            println!("└───────────────────────────────────────────────────────────────────────┘\n");
+            std::process::exit(0);
         }
-    } else {
-        println!("✗ LED Controller NOT found on any I2C bus\n");
-        println!("Debug Info:");
-        println!("  - Searched /sys/class/i2c-dev for available buses");
-        println!("  - Probed address 0x26 on each bus using i2cget");
-        println!("  - Ensure i2c-tools is installed: apt install i2c-tools");
+    };
+
+    let bus_name = get_i2c_bus_name(bus);
+    println!("✓ LED Controller found on I2C bus {}: {}\n", bus, bus_name);
+    
+    // Read LED Bar registers
+    println!("LED Bar Registers (0x90-0x9A):");
+    match read_led_bar_registers(bus) {
+        Ok(regs) => {
+            println!("  Mode (0x90):           0x{:02X} ({})", regs.mode, 
+                match regs.mode {
+                    0 => "Solid",
+                    1 => "Breath",
+                    2 => "Loop",
+                    _ => "Unknown",
+                });
+            println!("  Brightness (0x91):     0x{:02X} ({}/255)", regs.brightness, regs.brightness);
+            println!("  Solid RGB (0x92-94):   R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.solid_red, regs.solid_green, regs.solid_blue);
+            println!("  Breath1 RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.breath1_red, regs.breath1_green, regs.breath1_blue);
+            println!("  Breath2 RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.breath2_red, regs.breath2_green, regs.breath2_blue);
+        }
+        Err(e) => {
+            println!("✗ Failed to read LED bar registers: {}", e);
+        }
     }
+    
+    println!("\nTest Commands:");
+    println!("  ./lincstation-leds test-all-off");
+    println!("  ./lincstation-leds test-all-white");
+    println!("  ./lincstation-leds test-all-red");
+    
     println!("└───────────────────────────────────────────────────────────────────────┘\n");
 
     std::process::exit(0);
 }
 
-// --- Status Logic ---
-
-// Check drive status based on device state and file existence
-
-// --- I2C LED Controller Functions ---
-
-/// Find the I2C bus that has the LED controller at address 0x26
 fn write_led_log(log: &LedLog, path: &str) -> std::io::Result<()> {
     let temp_path = format!("{}.tmp", path);
     // Pretty print for readability
@@ -230,4 +199,64 @@ fn write_led_log(log: &LedLog, path: &str) -> std::io::Result<()> {
 
 fn get_iso_timestamp() -> String {
     Utc::now().to_rfc3339()
+}
+// ============================================================================
+// TEST/DEBUG HELPERS
+// ============================================================================
+
+/// Parse --bus argument from command line args
+fn parse_bus_arg(args: &[String]) -> i32 {
+    for (i, arg) in args.iter().enumerate() {
+        if arg == "--bus" && i + 1 < args.len() {
+            if let Ok(bus_num) = args[i + 1].parse::<i32>() {
+                return bus_num;
+            }
+        }
+    }
+    
+    // Try to find bus dynamically
+    match find_i2c_bus() {
+        Some(bus) => {
+            println!("Auto-detected I2C bus: {}", bus);
+            bus
+        }
+        None => {
+            eprintln!("Could not find I2C LED controller. Use --bus N to specify manually.");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Execute a test command sequence
+fn test_command(test_name: &str, bus: i32, commands: Vec<LedCommand>) {
+    println!("\n╔═══════════════════════════════════════════════════════════════╗");
+    println!("║  Test: {}  {}", test_name, "   ".repeat((20 - test_name.len()) / 3));
+    println!("║  I2C Bus: {}  {}", bus, " ".repeat(52 - test_name.len()));
+    println!("╚═══════════════════════════════════════════════════════════════╝\n");
+
+    let mut state = LedControllerState::new();
+    
+    for (i, cmd) in commands.iter().enumerate() {
+        println!("[{}] {}", i + 1, cmd.describe());
+        
+        match execute_command(bus, &mut state, cmd.clone()) {
+            Ok(_) => println!("     ✓ Success"),
+            Err(e) => {
+                eprintln!("     ✗ Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+    
+    println!("\n✓ Test completed successfully!");
+    println!("Final LED State:");
+    println!("  Bar: mode={:?}, brightness={}, color={:?}", 
+        state.bar.mode, state.bar.brightness, state.bar.color);
+    
+    println!("  Strips:");
+    for name in LED_STRIP_NAMES {
+        if let Some(strip) = state.get_strip(name) {
+            println!("    {}: {}", name, strip.describe());
+        }
+    }
 }
