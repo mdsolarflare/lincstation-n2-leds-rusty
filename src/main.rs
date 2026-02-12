@@ -10,7 +10,7 @@ use services::disk_status::{check_drive_status, detect_all_devices, build_device
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
     execute_command, test_all_lights_off, test_all_lights_white, test_all_lights_red,
-    read_led_bar_registers, LED_STRIP_NAMES,
+    read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
 };
 
 // Configuration for your specific hardware
@@ -182,8 +182,8 @@ fn debug_check_status() {
                     2 => "Loop",
                     _ => "Unknown",
                 });
-            println!("  Brightness (0x91):         0x{:02X} ({}/255)", regs.brightness, regs.brightness);
-            println!("  Solid/Breathing Color RGB (0x92-94):       R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+            println!("  Brightness (0x91):          0x{:02X} ({}/255)", regs.brightness, regs.brightness);
+            println!("  Color RGB (0x92-94):        R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
                 regs.color_red, regs.color_green, regs.color_blue);
             println!("    (used by Solid & Breath modes)");
             println!("  Loop Color A RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
@@ -193,6 +193,33 @@ fn debug_check_status() {
         }
         Err(e) => {
             println!("✗ Failed to read LED bar registers: {}", e);
+        }
+    }
+    
+    // Read LED Strip registers
+    println!("\nLED Strip Registers (8 disk/device LEDs):");
+    match read_led_strip_registers(bus) {
+        Ok(strip_regs) => {
+            println!("  Standard Control (0xA0/0xB0):");
+            println!("    On Register (0xA0):  0x{:02X}", strip_regs.on_std);
+            println!("    Off Register (0xB0): 0x{:02X}", strip_regs.off_std);
+            println!("  NVME Control (0xA1/0xB1):");
+            println!("    On Register (0xA1):  0x{:02X}", strip_regs.on_nvme);
+            println!("    Off Register (0xB1): 0x{:02X}", strip_regs.off_nvme);
+            println!("\n  Strip States:");
+            println!("    {:<8} | {:<6} | {:<6} | {:<6} | {:<10}", 
+                "Name", "White", "Red", "Blink", "BlinkReg");
+            println!("    {}", "-".repeat(56));
+            for strip in &strip_regs.strips {
+                let white_str = if strip.white_on { "✓" } else { "✗" };
+                let red_str = if strip.red_on { "✓" } else { "✗" };
+                let blink_str = if strip.blink_value != 0 { "✓" } else { "✗" };
+                println!("    {:<8} | {:<6} | {:<6} | {:<6} | 0x{:02X}={:3}", 
+                    strip.name, white_str, red_str, blink_str, strip.blink_register, strip.blink_value);
+            }
+        }
+        Err(e) => {
+            println!("✗ Failed to read LED strip registers: {}", e);
         }
     }
     

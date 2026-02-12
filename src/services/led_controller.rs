@@ -123,7 +123,7 @@ impl LedStrip {
 // ============================================================================
 
 /// Names of the 8 LED strips
-pub const LED_STRIP_NAMES: &[&str] = &["OS", "HDD0", "HDD1", "NVME1", "NVME2", "NVME3", "NVME4"];
+pub const LED_STRIP_NAMES: &[&str] = &["MGMT", "HDD0", "HDD1", "NVME1", "NVME2", "NVME3", "NVME4", "POWER"];
 
 /// Complete LED controller state - both bar and strips
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,6 +351,73 @@ pub fn read_led_bar_registers(bus: i32) -> Result<LedBarRegisters, String> {
             .map_err(|e| format!("Failed to read loop B green (0x99): {}", e))?,
         loop_b_blue: device.smbus_read_byte_data(0x9A)
             .map_err(|e| format!("Failed to read loop B blue (0x9A): {}", e))?,
+    })
+}
+
+/// LED strip register readings
+#[derive(Debug, Clone)]
+pub struct LedStripRegisters {
+    pub on_std: u8,                // 0xA0 - Standard LED on register
+    pub off_std: u8,               // 0xB0 - Standard LED off register
+    pub on_nvme: u8,               // 0xA1 - NVME LED on register
+    pub off_nvme: u8,              // 0xB1 - NVME LED off register
+    pub strips: Vec<StripState>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StripState {
+    pub name: String,
+    pub white_on: bool,
+    pub red_on: bool,
+    pub blink_register: u8,        // Register address for blinking control
+    pub blink_value: u8,           // Actual value read from blink register
+}
+
+/// Read all LED strip registers
+pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
+    let dev_path = format!("/dev/i2c-{}", bus);
+    let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
+        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+
+    // Read all 4 control registers
+    let on_std = device.smbus_read_byte_data(0xA0)
+        .map_err(|e| format!("Failed to read on register (0xA0): {}", e))?;
+    let off_std = device.smbus_read_byte_data(0xB0)
+        .map_err(|e| format!("Failed to read off register (0xB0): {}", e))?;
+    let on_nvme = device.smbus_read_byte_data(0xA1)
+        .map_err(|e| format!("Failed to read on register (0xA1): {}", e))?;
+    let off_nvme = device.smbus_read_byte_data(0xB1)
+        .map_err(|e| format!("Failed to read off register (0xB1): {}", e))?;
+
+    let mut strips = Vec::new();
+    for strip_map in STRIP_REGISTERS.iter() {
+        // Determine which registers to use
+        let is_nvme = strip_map.name.starts_with("NVME");
+        let on_reg = if is_nvme { on_nvme } else { on_std };
+
+        // Check if bits are set
+        let white_on = (on_reg & strip_map.white_bit) != 0;
+        let red_on = (on_reg & strip_map.red_bit) != 0;
+
+        // Read blink register for this strip
+        let blink_value = device.smbus_read_byte_data(strip_map.blink_register)
+            .unwrap_or(0);  // Default to 0 if read fails
+
+        strips.push(StripState {
+            name: strip_map.name.to_string(),
+            white_on,
+            red_on,
+            blink_register: strip_map.blink_register,
+            blink_value,
+        });
+    }
+
+    Ok(LedStripRegisters {
+        on_std,
+        off_std,
+        on_nvme,
+        off_nvme,
+        strips,
     })
 }
 
