@@ -33,3 +33,15 @@ the high level idea is that the disk status service will periodically get the di
 the led controller service will be given that to "drive" the correct led colors, brightness, etc
 
 at the end of this when i am rewriting this, we will verify the "reusability" of this by looking at what would happen with a similar linux system but different led controller. i don't look to address it, just confirm that if a better "led driver" becomes available, i can plug it in if it's not linux native ezpz mode.
+
+
+the physical case has leds like this (top to bottom is left to right on the machine)
+LED1 -> SSD1
+LED2 -> SSD2
+LED3 -> NVME1
+LED4 -> NVME2
+LED5 -> NVME3
+LED6 -> NVME4
+LED7 -> <...> (a management port symbol?)
+
+

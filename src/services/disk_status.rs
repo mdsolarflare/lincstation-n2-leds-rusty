@@ -29,18 +29,18 @@ pub struct DiskStats {
 }
 
 /// Registry of all physical drive slots on the LincStation N2.
-/// 7 drive bays + 1 chassis LED
+/// 7 storage locations
 pub const SLOTS: &[DriveSlot] = &[
     // Position 1: OS Drive (maps to network LED)
     DriveSlot { slot_name: "OS",    sys_name: "mmcblk0" }, 
     // Position 2-3: SATA Drives (HDD0, HDD1)
-    DriveSlot { slot_name: "SATA0", sys_name: "sdb" },
-    DriveSlot { slot_name: "SATA1", sys_name: "sdc" },
+    DriveSlot { slot_name: "SATA1", sys_name: "sda" },
+    DriveSlot { slot_name: "SATA2", sys_name: "sdb" },
     // Position 4-7: NVME Drives
-    DriveSlot { slot_name: "NVME0", sys_name: "nvme0n1" },
-    DriveSlot { slot_name: "NVME1", sys_name: "nvme1n1" },
-    DriveSlot { slot_name: "NVME2", sys_name: "nvme2n1" },
-    DriveSlot { slot_name: "NVME3", sys_name: "nvme3n1" },
+    DriveSlot { slot_name: "NVME1", sys_name: "nvme0n1" },
+    DriveSlot { slot_name: "NVME2", sys_name: "nvme1n1" },
+    DriveSlot { slot_name: "NVME3", sys_name: "nvme2n1" },
+    DriveSlot { slot_name: "NVME4", sys_name: "nvme3n1" },
 ];
 
 /// Read disk statistics from /proc/diskstats
