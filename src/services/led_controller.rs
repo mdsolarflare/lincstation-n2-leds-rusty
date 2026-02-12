@@ -169,6 +169,7 @@ impl LedControllerState {
 /// Commands that can be executed on the LED controller
 /// This enum represents the complete command library
 #[derive(Debug, Clone)]
+#[allow(dead_code)]  // Some variants planned for future use
 pub enum LedCommand {
     // LED Bar commands
     SetBarMode(LedBarMode),
@@ -310,15 +311,15 @@ pub fn get_i2c_bus_name(bus_num: i32) -> String {
 pub struct LedBarRegisters {
     pub mode: u8,                      // 0x90
     pub brightness: u8,                // 0x91
-    pub solid_red: u8,                 // 0x92
-    pub solid_green: u8,               // 0x93
-    pub solid_blue: u8,                // 0x94
-    pub breath_red: u8,               // 0x95
-    pub breath_green: u8,             // 0x96
-    pub breath_blue: u8,              // 0x97
-    pub loop_red: u8,               // 0x98
-    pub loop_green: u8,             // 0x99
-    pub loop_blue: u8,              // 0x9A
+    pub color_red: u8,                 // 0x92 - used by Solid and Breath modes
+    pub color_green: u8,               // 0x93 - used by Solid and Breath modes
+    pub color_blue: u8,                // 0x94 - used by Solid and Breath modes
+    pub loop_a_red: u8,                // 0x95 - Loop mode color A
+    pub loop_a_green: u8,              // 0x96 - Loop mode color A
+    pub loop_a_blue: u8,               // 0x97 - Loop mode color A
+    pub loop_b_red: u8,                // 0x98 - Loop mode color B
+    pub loop_b_green: u8,              // 0x99 - Loop mode color B
+    pub loop_b_blue: u8,               // 0x9A - Loop mode color B
 }
 
 /// Read all LED bar registers (0x90-0x9A)
@@ -332,24 +333,24 @@ pub fn read_led_bar_registers(bus: i32) -> Result<LedBarRegisters, String> {
             .map_err(|e| format!("Failed to read mode (0x90): {}", e))?,
         brightness: device.smbus_read_byte_data(0x91)
             .map_err(|e| format!("Failed to read brightness (0x91): {}", e))?,
-        solid_red: device.smbus_read_byte_data(0x92)
-            .map_err(|e| format!("Failed to read solid red (0x92): {}", e))?,
-        solid_green: device.smbus_read_byte_data(0x93)
-            .map_err(|e| format!("Failed to read solid green (0x93): {}", e))?,
-        solid_blue: device.smbus_read_byte_data(0x94)
-            .map_err(|e| format!("Failed to read solid blue (0x94): {}", e))?,
-        breath_red: device.smbus_read_byte_data(0x95)
-            .map_err(|e| format!("Failed to read breath red (0x95): {}", e))?,
-        breath_green: device.smbus_read_byte_data(0x96)
-            .map_err(|e| format!("Failed to read breath green (0x96): {}", e))?,
-        breath_blue: device.smbus_read_byte_data(0x97)
-            .map_err(|e| format!("Failed to read breath blue (0x97): {}", e))?,
-        loop_red: device.smbus_read_byte_data(0x98)
-            .map_err(|e| format!("Failed to read loop red (0x98): {}", e))?,
-        loop_green: device.smbus_read_byte_data(0x99)
-            .map_err(|e| format!("Failed to read loop green (0x99): {}", e))?,
-        loop_blue: device.smbus_read_byte_data(0x9A)
-            .map_err(|e| format!("Failed to read loop blue (0x9A): {}", e))?,
+        color_red: device.smbus_read_byte_data(0x92)
+            .map_err(|e| format!("Failed to read color red (0x92): {}", e))?,
+        color_green: device.smbus_read_byte_data(0x93)
+            .map_err(|e| format!("Failed to read color green (0x93): {}", e))?,
+        color_blue: device.smbus_read_byte_data(0x94)
+            .map_err(|e| format!("Failed to read color blue (0x94): {}", e))?,
+        loop_a_red: device.smbus_read_byte_data(0x95)
+            .map_err(|e| format!("Failed to read loop A red (0x95): {}", e))?,
+        loop_a_green: device.smbus_read_byte_data(0x96)
+            .map_err(|e| format!("Failed to read loop A green (0x96): {}", e))?,
+        loop_a_blue: device.smbus_read_byte_data(0x97)
+            .map_err(|e| format!("Failed to read loop A blue (0x97): {}", e))?,
+        loop_b_red: device.smbus_read_byte_data(0x98)
+            .map_err(|e| format!("Failed to read loop B red (0x98): {}", e))?,
+        loop_b_green: device.smbus_read_byte_data(0x99)
+            .map_err(|e| format!("Failed to read loop B green (0x99): {}", e))?,
+        loop_b_blue: device.smbus_read_byte_data(0x9A)
+            .map_err(|e| format!("Failed to read loop B blue (0x9A): {}", e))?,
     })
 }
 

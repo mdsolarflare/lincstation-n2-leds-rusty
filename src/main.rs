@@ -14,12 +14,29 @@ use services::led_controller::{
 };
 
 // Configuration for your specific hardware
+#[allow(dead_code)]
 const LOG_PATH: &str = "/var/log/lincstation_leds.json";
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize)]
 struct LedLog {
     leds: Vec<String>,  // TODO: Update when daemon loop is implemented
     last_updated: String,
+}
+
+#[allow(dead_code)]
+fn write_led_log(log: &LedLog, path: &str) -> std::io::Result<()> {
+    let temp_path = format!("{}.tmp", path);
+    // Pretty print for readability
+    let serialized = serde_json::to_string_pretty(log)?;
+    fs::write(&temp_path, serialized)?;
+    fs::rename(&temp_path, path)?;
+    Ok(())
+}
+
+#[allow(dead_code)]
+fn get_iso_timestamp() -> String {
+    Utc::now().to_rfc3339()
 }
 
 
@@ -165,13 +182,14 @@ fn debug_check_status() {
                     2 => "Loop",
                     _ => "Unknown",
                 });
-            println!("  Brightness (0x91):     0x{:02X} ({}/255)", regs.brightness, regs.brightness);
-            println!("  Solid RGB (0x92-94):   R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.solid_red, regs.solid_green, regs.solid_blue);
-            println!("  Breath RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.breath_red, regs.breath_green, regs.breath_blue);
-            println!("  Loop RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.loop_red, regs.loop_green, regs.loop_blue);
+            println!("  Brightness (0x91):         0x{:02X} ({}/255)", regs.brightness, regs.brightness);
+            println!("  Solid/Breathing Color RGB (0x92-94):       R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.color_red, regs.color_green, regs.color_blue);
+            println!("    (used by Solid & Breath modes)");
+            println!("  Loop Color A RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.loop_a_red, regs.loop_a_green, regs.loop_a_blue);
+            println!("  Loop Color B RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.loop_b_red, regs.loop_b_green, regs.loop_b_blue);
         }
         Err(e) => {
             println!("✗ Failed to read LED bar registers: {}", e);
@@ -188,18 +206,6 @@ fn debug_check_status() {
     std::process::exit(0);
 }
 
-fn write_led_log(log: &LedLog, path: &str) -> std::io::Result<()> {
-    let temp_path = format!("{}.tmp", path);
-    // Pretty print for readability
-    let serialized = serde_json::to_string_pretty(log)?;
-    fs::write(&temp_path, serialized)?;
-    fs::rename(&temp_path, path)?;
-    Ok(())
-}
-
-fn get_iso_timestamp() -> String {
-    Utc::now().to_rfc3339()
-}
 // ============================================================================
 // TEST/DEBUG HELPERS
 // ============================================================================
