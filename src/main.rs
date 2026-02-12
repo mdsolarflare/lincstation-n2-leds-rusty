@@ -168,10 +168,10 @@ fn debug_check_status() {
             println!("  Brightness (0x91):     0x{:02X} ({}/255)", regs.brightness, regs.brightness);
             println!("  Solid RGB (0x92-94):   R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
                 regs.solid_red, regs.solid_green, regs.solid_blue);
-            println!("  Breath1 RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.breath1_red, regs.breath1_green, regs.breath1_blue);
-            println!("  Breath2 RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.breath2_red, regs.breath2_green, regs.breath2_blue);
+            println!("  Breath RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.breath_red, regs.breath_green, regs.breath_blue);
+            println!("  Loop RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
+                regs.loop_red, regs.loop_green, regs.loop_blue);
         }
         Err(e) => {
             println!("✗ Failed to read LED bar registers: {}", e);
