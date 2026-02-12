@@ -424,7 +424,7 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             }
             _write_bar_mode(bus, LedBarMode::Solid)?;
             _write_bar_brightness(bus, 0)?;
-            _write_bar_color(bus, LedColor::Off)?;
+            _write_bar_color(bus, LedColor::Black)?;
             for name in LED_STRIP_NAMES {
                 _write_strip_color(bus, name, false, false)?;
                 _write_strip_blinking(bus, name, false)?;
