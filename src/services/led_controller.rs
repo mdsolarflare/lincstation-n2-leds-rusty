@@ -218,7 +218,7 @@ pub fn test_all_lights_off() -> Vec<LedCommand> {
     let mut cmds = vec![
         LedCommand::SetBarMode(LedBarMode::Solid),
         LedCommand::SetBarBrightness(0),
-        LedCommand::SetBarColor(LedColor::Off),
+        LedCommand::SetBarColor(LedColor::Black),
     ];
     
     for name in LED_STRIP_NAMES {
