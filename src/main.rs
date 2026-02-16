@@ -200,12 +200,9 @@ fn debug_check_status() {
     println!("\nLED Strip Registers (8 disk/device LEDs):");
     match read_led_strip_registers(bus) {
         Ok(strip_regs) => {
-            println!("  Standard Control (0xA0/0xB0):");
-            println!("    On Register (0xA0):  0x{:02X}", strip_regs.on_std);
-            println!("    Off Register (0xB0): 0x{:02X}", strip_regs.off_std);
-            println!("  NVME Control (0xA1/0xB1):");
-            println!("    On Register (0xA1):  0x{:02X}", strip_regs.on_nvme);
-            println!("    Off Register (0xB1): 0x{:02X}", strip_regs.off_nvme);
+            println!("  Control register addresses (static):");
+            println!("    Standard On/Off: 0xA0 / 0xB0");
+            println!("    NVME     On/Off: 0xA1 / 0xB1");
             println!("\n  Strip States:");
             println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | R_OFF  | R_OFF_V | B_ON   | B_ON_V", 
                 "Name");

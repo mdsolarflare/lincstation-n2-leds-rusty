@@ -375,6 +375,8 @@ pub struct StripState {
     pub red_off_val: u8,
     pub blink_on_reg: u8,
     pub blink_on_value: u8,
+    pub blink_off_reg: u8,
+    pub blink_off_value: u8,
 }
 
 /// Read all LED strip registers
@@ -400,11 +402,11 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
         let on_reg = if is_nvme { on_nvme } else { on_std };
         let off_reg = if is_nvme { off_nvme } else { off_std };
 
-        // Check if bits are set using the on values (which are the bit masks)
+        // Determine which channels are currently ON by masking the control byte
         let white_on = (on_reg & strip_map.white_on_val) != 0;
         let red_on = (on_reg & strip_map.red_on_val) != 0;
 
-        // Read blink ON register for this strip
+        // Read blink ON register for this strip (actual device state)
         let blink_on_value = device.smbus_read_byte_data(strip_map.blink_on_reg)
             .unwrap_or(0);  // Default to 0 if read fails
 
@@ -423,7 +425,7 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
             blink_on_reg: strip_map.blink_on_reg,
             blink_on_value,
             blink_off_reg: strip_map.blink_off_reg,
-            blink_off_val: strip_map.blink_off_val,
+            blink_off_value: strip_map.blink_off_val,
         });
     }
 
