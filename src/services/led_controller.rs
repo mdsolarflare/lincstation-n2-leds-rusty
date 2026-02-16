@@ -123,7 +123,7 @@ impl LedStrip {
 // ============================================================================
 
 /// Names of the 8 LED strips
-pub const LED_STRIP_NAMES: &[&str] = &["MGMT", "HDD0", "HDD1", "NVME1", "NVME2", "NVME3", "NVME4", "POWER"];
+pub const LED_STRIP_NAMES: &[&str] = &["POWER", "MGMT", "SSD1", "SSD2", "NVME1", "NVME2", "NVME3", "NVME4"];
 
 /// Complete LED controller state - both bar and strips
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -511,24 +511,98 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
 // LED STRIP REGISTER MAP
 // ============================================================================
 
-/// Mapping of strip names to their control registers and bit positions
-/// Format: (name, register_offset_for_controls, white_bit, red_bit, blink_register)
+/// Mapping of strip names to their I2C register and value commands
+/// Each strip has separate registers and values for turning white/red on/off
+/// and for controlling blinking
 struct StripRegisterMap {
     name: &'static str,
-    white_bit: u8,
-    red_bit: u8,
-    blink_register: u8,
+    white_on_reg: u8,
+    white_on_val: u8,
+    white_off_reg: u8,
+    white_off_val: u8,
+    red_on_reg: u8,
+    red_on_val: u8,
+    red_off_reg: u8,
+    red_off_val: u8,
+    blink_on_reg: u8,
+    blink_on_val: u8,
+    blink_off_reg: u8,
+    blink_off_val: u8,
 }
 
 const STRIP_REGISTERS: &[StripRegisterMap] = &[
-    StripRegisterMap { name: "POWER",  white_bit: 0x01, red_bit: 0x02, blink_register: 0x50 },
-    StripRegisterMap { name: "MGMT",   white_bit: 0x40, red_bit: 0x80, blink_register: 0x56 },
-    StripRegisterMap { name: "SSD1",   white_bit: 0x04, red_bit: 0x08, blink_register: 0x52 },
-    StripRegisterMap { name: "SSD2",   white_bit: 0x10, red_bit: 0x20, blink_register: 0x54 },
-    StripRegisterMap { name: "NVME1",  white_bit: 0x01, red_bit: 0x02, blink_register: 0x58 },
-    StripRegisterMap { name: "NVME2",  white_bit: 0x04, red_bit: 0x08, blink_register: 0x5A },
-    StripRegisterMap { name: "NVME3",  white_bit: 0x10, red_bit: 0x20, blink_register: 0x5C },
-    StripRegisterMap { name: "NVME4",  white_bit: 0x40, red_bit: 0x80, blink_register: 0x5E },
+    StripRegisterMap {
+        name: "POWER",
+        white_on_reg: 0xA0, white_on_val: 0x01,
+        white_off_reg: 0xB0, white_off_val: 0x01,
+        red_on_reg: 0xA0, red_on_val: 0x02,
+        red_off_reg: 0xB0, red_off_val: 0x02,
+        blink_on_reg: 0x50, blink_on_val: 0x01,
+        blink_off_reg: 0x50, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "MGMT",
+        white_on_reg: 0xA0, white_on_val: 0x40,
+        white_off_reg: 0xB0, white_off_val: 0x40,
+        red_on_reg: 0xA0, red_on_val: 0x80,
+        red_off_reg: 0xB0, red_off_val: 0x80,
+        blink_on_reg: 0x56, blink_on_val: 0x01,
+        blink_off_reg: 0x56, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "SSD1",
+        white_on_reg: 0xA0, white_on_val: 0x04,
+        white_off_reg: 0xB0, white_off_val: 0x04,
+        red_on_reg: 0xA0, red_on_val: 0x08,
+        red_off_reg: 0xB0, red_off_val: 0x08,
+        blink_on_reg: 0x52, blink_on_val: 0x01,
+        blink_off_reg: 0x52, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "SSD2",
+        white_on_reg: 0xA0, white_on_val: 0x10,
+        white_off_reg: 0xB0, white_off_val: 0x10,
+        red_on_reg: 0xA0, red_on_val: 0x20,
+        red_off_reg: 0xB0, red_off_val: 0x20,
+        blink_on_reg: 0x54, blink_on_val: 0x01,
+        blink_off_reg: 0x54, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "NVME1",
+        white_on_reg: 0xA1, white_on_val: 0x01,
+        white_off_reg: 0xB1, white_off_val: 0x01,
+        red_on_reg: 0xA1, red_on_val: 0x02,
+        red_off_reg: 0xB1, red_off_val: 0x02,
+        blink_on_reg: 0x58, blink_on_val: 0x01,
+        blink_off_reg: 0x58, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "NVME2",
+        white_on_reg: 0xA1, white_on_val: 0x04,
+        white_off_reg: 0xB1, white_off_val: 0x04,
+        red_on_reg: 0xA1, red_on_val: 0x08,
+        red_off_reg: 0xB1, red_off_val: 0x08,
+        blink_on_reg: 0x5A, blink_on_val: 0x01,
+        blink_off_reg: 0x5A, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "NVME3",
+        white_on_reg: 0xA1, white_on_val: 0x10,
+        white_off_reg: 0xB1, white_off_val: 0x10,
+        red_on_reg: 0xA1, red_on_val: 0x20,
+        red_off_reg: 0xB1, red_off_val: 0x20,
+        blink_on_reg: 0x5C, blink_on_val: 0x01,
+        blink_off_reg: 0x5C, blink_off_val: 0x00,
+    },
+    StripRegisterMap {
+        name: "NVME4",
+        white_on_reg: 0xA1, white_on_val: 0x40,
+        white_off_reg: 0xB1, white_off_val: 0x40,
+        red_on_reg: 0xA1, red_on_val: 0x80,
+        red_off_reg: 0xB1, red_off_val: 0x80,
+        blink_on_reg: 0x5E, blink_on_val: 0x01,
+        blink_off_reg: 0x5E, blink_off_val: 0x00,
+    },
 ];
 
 /// Get the register map entry for a strip name
@@ -536,10 +610,7 @@ fn _get_strip_register_map(name: &str) -> Option<&'static StripRegisterMap> {
     STRIP_REGISTERS.iter().find(|r| r.name == name)
 }
 
-/// Determine if this strip uses 0xA0/0xB0 (standard) or 0xA1/0xB1 (NVME)
-fn _is_nvme_strip(name: &str) -> bool {
-    name.starts_with("NVME")
-}
+
 
 // ============================================================================
 // HARDWARE REGISTER WRITES (Private Implementation)
@@ -617,29 +688,25 @@ fn _write_strip_color(bus: i32, name: &str, white_on: bool, red_on: bool) -> Res
     let reg_map = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
-    let is_nvme = _is_nvme_strip(name);
-    let on_reg = if is_nvme { 0xA1 } else { 0xA0 };
-    let off_reg = if is_nvme { 0xB1 } else { 0xB0 };
-
-    // Set white channel
+    // Write white channel
     if white_on {
         device
-            .smbus_write_byte_data(on_reg, reg_map.white_bit)
+            .smbus_write_byte_data(reg_map.white_on_reg, reg_map.white_on_val)
             .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))?;
     } else {
         device
-            .smbus_write_byte_data(off_reg, reg_map.white_bit)
+            .smbus_write_byte_data(reg_map.white_off_reg, reg_map.white_off_val)
             .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))?;
     }
 
-    // Set red channel
+    // Write red channel
     if red_on {
         device
-            .smbus_write_byte_data(on_reg, reg_map.red_bit)
+            .smbus_write_byte_data(reg_map.red_on_reg, reg_map.red_on_val)
             .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))?;
     } else {
         device
-            .smbus_write_byte_data(off_reg, reg_map.red_bit)
+            .smbus_write_byte_data(reg_map.red_off_reg, reg_map.red_off_val)
             .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))?;
     }
 
@@ -655,8 +722,13 @@ fn _write_strip_blinking(bus: i32, name: &str, enabled: bool) -> Result<(), Stri
     let reg_map = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
-    let value = if enabled { 0xFF } else { 0x00 };
-    device
-        .smbus_write_byte_data(reg_map.blink_register, value)
-        .map_err(|e| format!("Failed to set blinking for {}: {}", name, e))
+    if enabled {
+        device
+            .smbus_write_byte_data(reg_map.blink_on_reg, reg_map.blink_on_val)
+            .map_err(|e| format!("Failed to enable blinking for {}: {}", name, e))
+    } else {
+        device
+            .smbus_write_byte_data(reg_map.blink_off_reg, reg_map.blink_off_val)
+            .map_err(|e| format!("Failed to disable blinking for {}: {}", name, e))
+    }
 }

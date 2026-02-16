@@ -69,65 +69,37 @@ The LED bar has three display modes and uses RGB color control via SMBus registe
 
 ### LED Strips (8 Drive Indicators)
 
-The 8 LED strips (POWER/MGMT/HDD0/HDD1/NVME1-4) are controlled via bit-masked registers. Each strip has **two independent channels: white and red**. When both are on simultaneously, the LED appears orange. Blinking only appears to control white, when white and red are both on, it blinks white and red. 
+The 8 LED strips (POWER/MGMT/SATA1/SATA2/NVME1-4) are controlled via SMBus registers. Each strip has **two independent channels: white and red**. When both are on simultaneously, the LED appears orange. Blinking only affects the white channel.
 
-#### Control Registers (Bit Masks)
+#### LED Strip Register Command Reference
 
-| Register | Strips                  | Purpose                                                  |
-|----------|-------------------------|----------------------------------------------------------|
-| 0xA0     | POWER, MGMT, HDD0, HDD1 | "On" register - bit set = white/red channel active       |
-| 0xB0     | POWER, MGMT, HDD0, HDD1 | "Off" register - (inverse control, not fully understood) |
-| 0xA1     | NVME1-4                 | "On" register - bit set = white/red channel active       |
-| 0xB1     | NVME1-4                 | "Off" register - (inverse control, not fully understood) |
+To control each LED strip, write specific values to the control registers and blinking register. This table lists all required register addresses and values for each command:
 
-#### Per-Strip Blinking Control
+| Name  | White ON | White ON Val | White OFF | WHITE OFF Val | Red ON | Red ON Val | Red OFF | Red OFF Val | Blink ON | Blink ON Val | Blink OFF | Blink OFF Val |
+|-------|----------|--------------|-----------|---------------|--------|-----------|---------|-------------|----------|--------------|-----------|---------------|
+| POWER | 0xA0     | 0x01         | 0xB0      | 0x01          | 0xA0   | 0x02      | 0xB0    | 0x02        | 0x50     | 0x01         | 0x50      | 0x00          |
+| MGMT  | 0xA0     | 0x40         | 0xB0      | 0x40          | 0xA0   | 0x80      | 0xB0    | 0x80        | 0x56     | 0x01         | 0x56      | 0x00          |
+| SATA1 | 0xA0     | 0x04         | 0xB0      | 0x04          | 0xA0   | 0x08      | 0xB0    | 0x08        | 0x52     | 0x01         | 0x52      | 0x00          |
+| SATA2 | 0xA0     | 0x10         | 0xB0      | 0x10          | 0xA0   | 0x20      | 0xB0    | 0x20        | 0x54     | 0x01         | 0x54      | 0x00          |
+| NVME1 | 0xA1     | 0x01         | 0xB1      | 0x01          | 0xA1   | 0x02      | 0xB1    | 0x02        | 0x58     | 0x01         | 0x58      | 0x00          |
+| NVME2 | 0xA1     | 0x04         | 0xB1      | 0x04          | 0xA1   | 0x08      | 0xB1    | 0x08        | 0x5A     | 0x01         | 0x5A      | 0x00          |
+| NVME3 | 0xA1     | 0x10         | 0xB1      | 0x10          | 0xA1   | 0x20      | 0xB1    | 0x20        | 0x5C     | 0x01         | 0x5C      | 0x00          |
+| NVME4 | 0xA1     | 0x40         | 0xB1      | 0x40          | 0xA1   | 0x80      | 0xB1    | 0x80        | 0x5E     | 0x01         | 0x5E      | 0x00          |
 
-Each strip has a dedicated blinking register:
-TODO ADD POWER REGISTER
-- **0x52** - MGMT blinking
-- **0x54** - HDD0 blinking
-- **0x56** - HDD1 blinking
-- **0x58** - NVME1 blinking
-- **0x5A** - NVME2 blinking
-- **0x5C** - NVME3 blinking
-- **0x5E** - NVME4 blinking
+**Usage Pattern:**
+- To turn white ON: write the "White ON Val" to the "White ON" register
+- To turn white OFF: write the "White OFF Val" to the "White OFF" register
+- To turn red ON: write the "Red ON Val" to the "Red ON" register
+- To turn red OFF: write the "Red OFF Val" to the "Red OFF" register
+- To enable blinking: write the "Blink ON Val" to the "Blink ON" register
+- To disable blinking: write the "Blink OFF Val" to the "Blink OFF" register
 
-Writing 0x01 enables blinking, 0x00 disables it. Blinking only affects the white channel.
-
-#### Bit Assignments (Approximate)
-
-Let's TODO fix this later to show all the info for all 8 leds, even the repetitive bits
-
-```
-Strip       | White Bit | Red Bit  | Blink Register
---------    |-----------|----------|----------------
-TODO ADD POWER REGISTER
-MGMT        | 0x40      | 0x80     | 0x56
-HDD0        | 0x01      | 0x02     | 0x52
-HDD1        | 0x04      | 0x08     | 0x54
-NVME1       | 0x01      | 0x02     | 0x58
-NVME2       | 0x04      | 0x08     | 0x5A
-NVME3       | 0x10      | 0x20     | 0x5C
-NVME4       | 0x40      | 0x80     | 0x5E
-```
+Each write is a single SMBus byte write to the specified register address on device 0x26.
 
 ### Communication Pattern
 
-All register updates are atomic SMBus byte writes. The typical flow is:
-
 1. Open I2C device at `/dev/i2c-N` (bus number auto-detected or specified)
-2. For LED bar: write mode, brightness, then RGB values
-3. For LED strips: write control register bits, then write blinking register value
+2. For LED bar: write mode (0x90), brightness (0x91), then RGB values (0x92-0x9A)
+3. For LED strips: refer to the register command reference table above
 4. All reads/writes go to device address 0x26
-
-### Example: Setting All Strips to White with Blinking
-
-TODO add explanation that you write 0x01 to all the 8 led blinking registers
-
-### Known Limitations / TODO
-
-- The 0xB0/0xB1 "off" registers require further characterization
-- Whether writes to unused color sets (e.g., unused loop colors) have any side effects
-- Exact blinking frequency and duty cycle
-- Maximum safe update frequency without hardware damage
 
