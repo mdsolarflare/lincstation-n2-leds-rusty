@@ -401,8 +401,8 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
         let off_reg = if is_nvme { off_nvme } else { off_std };
 
         // Check if bits are set
-        let white_on = (on_reg & strip_map.white_bit) != 0;
-        let red_on = (on_reg & strip_map.red_bit) != 0;
+        let white_on = (on_reg & strip_map.white_on_val) != 0;
+        let red_on = (on_reg & strip_map.red_on_val) != 0;
 
         // Read both blink ON and OFF registers for this strip
         let blink_on_value = device.smbus_read_byte_data(strip_map.blink_on_reg)
