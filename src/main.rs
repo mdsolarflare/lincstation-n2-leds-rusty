@@ -207,16 +207,16 @@ fn debug_check_status() {
             println!("    On Register (0xA1):  0x{:02X}", strip_regs.on_nvme);
             println!("    Off Register (0xB1): 0x{:02X}", strip_regs.off_nvme);
             println!("\n  Strip States:");
-            println!("    {:<8} | OnReg  | OffReg | W | R | BlinkON Reg | BlinkON Val | BlinkOFF Reg | BlinkOFF Val", 
+            println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | B_ON   | B_ON_V", 
                 "Name");
-            println!("    {}", "-".repeat(100));
+            println!("    {}", "-".repeat(90));
             for strip in &strip_regs.strips {
-                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | {} | {} | 0x{:02X}      | 0x{:02X}      | 0x{:02X}       | 0x{:02X}", 
-                    strip.name, strip.raw_on_reg, strip.raw_off_reg, 
-                    if strip.white_on { "1" } else { "0" },
-                    if strip.red_on { "1" } else { "0" },
-                    strip.blink_on_reg, strip.blink_on_value,
-                    strip.blink_off_reg, strip.blink_off_value);
+                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}", 
+                    strip.name,
+                    strip.white_on_reg, strip.white_on_val,
+                    strip.white_off_reg, strip.white_off_val,
+                    strip.red_on_reg, strip.red_on_val,
+                    strip.blink_on_reg, strip.blink_on_value);
             }
         }
         Err(e) => {

@@ -369,12 +369,16 @@ pub struct StripState {
     pub name: String,
     pub white_on: bool,
     pub red_on: bool,
-    pub blink_on_reg: u8,          // Blink ON register address
-    pub blink_on_value: u8,        // Actual value read from blink ON register
-    pub blink_off_reg: u8,         // Blink OFF register address
-    pub blink_off_value: u8,       // Actual value read from blink OFF register
-    pub raw_on_reg: u8,            // Raw value from on register (0xA0 or 0xA1)
-    pub raw_off_reg: u8,           // Raw value from off register (0xB0 or 0xB1)
+    pub white_on_reg: u8,
+    pub white_on_val: u8,
+    pub white_off_reg: u8,
+    pub white_off_val: u8,
+    pub red_on_reg: u8,
+    pub red_on_val: u8,
+    pub red_off_reg: u8,
+    pub red_off_val: u8,
+    pub blink_on_reg: u8,
+    pub blink_on_value: u8,
 }
 
 /// Read all LED strip registers
@@ -400,26 +404,28 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
         let on_reg = if is_nvme { on_nvme } else { on_std };
         let off_reg = if is_nvme { off_nvme } else { off_std };
 
-        // Check if bits are set
-        let white_on = (on_reg & strip_map.white_on_val) != 0;
-        let red_on = (on_reg & strip_map.red_on_val) != 0;
+        // Check if bits are set (use white_bit and red_bit for reading state)
+        let white_on = (on_reg & strip_map.white_bit) != 0;
+        let red_on = (on_reg & strip_map.red_bit) != 0;
 
-        // Read both blink ON and OFF registers for this strip
+        // Read blink ON register for this strip
         let blink_on_value = device.smbus_read_byte_data(strip_map.blink_on_reg)
-            .unwrap_or(0);  // Default to 0 if read fails
-        let blink_off_value = device.smbus_read_byte_data(strip_map.blink_off_reg)
             .unwrap_or(0);  // Default to 0 if read fails
 
         strips.push(StripState {
             name: strip_map.name.to_string(),
             white_on,
             red_on,
+            white_on_reg: strip_map.white_on_reg,
+            white_on_val: strip_map.white_on_val,
+            white_off_reg: strip_map.white_off_reg,
+            white_off_val: strip_map.white_off_val,
+            red_on_reg: strip_map.red_on_reg,
+            red_on_val: strip_map.red_on_val,
+            red_off_reg: strip_map.red_off_reg,
+            red_off_val: strip_map.red_off_val,
             blink_on_reg: strip_map.blink_on_reg,
             blink_on_value,
-            blink_off_reg: strip_map.blink_off_reg,
-            blink_off_value,
-            raw_on_reg: on_reg,
-            raw_off_reg: off_reg,
         });
     }
 
