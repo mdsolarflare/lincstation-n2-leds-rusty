@@ -32,7 +32,8 @@ pub struct DiskStats {
 /// 7 storage locations
 pub const SLOTS: &[DriveSlot] = &[
     // Position 1: OS Drive (maps to network LED)
-    DriveSlot { slot_name: "OS",    sys_name: "mmcblk0" }, 
+    DriveSlot { slot_name: "MGMT",  sys_name: "TBD" },
+    DriveSlot { slot_name: "POWER", sys_name: "mmcblk0" }, 
     // Position 2-3: SATA Drives (HDD0, HDD1)
     DriveSlot { slot_name: "SATA1", sys_name: "sda" },
     DriveSlot { slot_name: "SATA2", sys_name: "sdb" },

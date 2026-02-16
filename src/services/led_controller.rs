@@ -371,6 +371,8 @@ pub struct StripState {
     pub red_on: bool,
     pub blink_register: u8,        // Register address for blinking control
     pub blink_value: u8,           // Actual value read from blink register
+    pub raw_on_reg: u8,            // Raw value from on register (0xA0 or 0xA1)
+    pub raw_off_reg: u8,           // Raw value from off register (0xB0 or 0xB1)
 }
 
 /// Read all LED strip registers
@@ -394,6 +396,7 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
         // Determine which registers to use
         let is_nvme = strip_map.name.starts_with("NVME");
         let on_reg = if is_nvme { on_nvme } else { on_std };
+        let off_reg = if is_nvme { off_nvme } else { off_std };
 
         // Check if bits are set
         let white_on = (on_reg & strip_map.white_bit) != 0;
@@ -409,6 +412,8 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
             red_on,
             blink_register: strip_map.blink_register,
             blink_value,
+            raw_on_reg: on_reg,
+            raw_off_reg: off_reg,
         });
     }
 
