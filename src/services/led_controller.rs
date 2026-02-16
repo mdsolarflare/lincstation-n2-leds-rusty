@@ -357,10 +357,6 @@ pub fn read_led_bar_registers(bus: i32) -> Result<LedBarRegisters, String> {
 /// LED strip register readings
 #[derive(Debug, Clone)]
 pub struct LedStripRegisters {
-    pub on_std: u8,                // 0xA0 - Standard LED on register
-    pub off_std: u8,               // 0xB0 - Standard LED off register
-    pub on_nvme: u8,               // 0xA1 - NVME LED on register
-    pub off_nvme: u8,              // 0xB1 - NVME LED off register
     pub strips: Vec<StripState>,
 }
 
@@ -426,16 +422,12 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
             red_off_val: strip_map.red_off_val,
             blink_on_reg: strip_map.blink_on_reg,
             blink_on_value,
+            blink_off_reg: strip_map.blink_off_reg,
+            blink_off_val: strip_map.blink_off_val,
         });
     }
 
-    Ok(LedStripRegisters {
-        on_std,
-        off_std,
-        on_nvme,
-        off_nvme,
-        strips,
-    })
+    Ok(LedStripRegisters { strips })
 }
 
 // ============================================================================
