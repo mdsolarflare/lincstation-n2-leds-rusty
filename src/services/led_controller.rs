@@ -362,9 +362,10 @@ pub struct LedStripRegisters {
 
 #[derive(Debug, Clone)]
 pub struct StripState {
+    // Identity
     pub name: String,
-    pub white_on: bool,
-    pub red_on: bool,
+
+    // Const map (addresses & masks)
     pub white_on_reg: u8,
     pub white_on_val: u8,
     pub white_off_reg: u8,
@@ -373,10 +374,8 @@ pub struct StripState {
     pub red_on_val: u8,
     pub red_off_reg: u8,
     pub red_off_val: u8,
-    pub blink_on_reg: u8,
-    pub blink_on_value: u8,
-    pub blink_off_reg: u8,
-    pub blink_off_value: u8,
+    pub blink_reg: u8,
+    pub blink_val: u8
 }
 
 /// Read all LED strip registers
@@ -385,47 +384,29 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
-    // Read all 4 control registers
-    let on_std = device.smbus_read_byte_data(0xA0)
-        .map_err(|e| format!("Failed to read on register (0xA0): {}", e))?;
-    let off_std = device.smbus_read_byte_data(0xB0)
-        .map_err(|e| format!("Failed to read off register (0xB0): {}", e))?;
-    let on_nvme = device.smbus_read_byte_data(0xA1)
-        .map_err(|e| format!("Failed to read on register (0xA1): {}", e))?;
-    let off_nvme = device.smbus_read_byte_data(0xB1)
-        .map_err(|e| format!("Failed to read off register (0xB1): {}", e))?;
-
     let mut strips = Vec::new();
     for strip_map in STRIP_REGISTERS.iter() {
-        // Determine which registers to use
-        let is_nvme = strip_map.name.starts_with("NVME");
-        let on_reg = if is_nvme { on_nvme } else { on_std };
-        let off_reg = if is_nvme { off_nvme } else { off_std };
 
-        // Determine which channels are currently ON by masking the control byte
-        let white_on = (on_reg & strip_map.white_on_val) != 0;
-        let red_on = (on_reg & strip_map.red_on_val) != 0;
-
-        // Read blink ON register for this strip (actual device state)
-        let blink_on_value = device.smbus_read_byte_data(strip_map.blink_on_reg)
-            .unwrap_or(0);  // Default to 0 if read fails
+        let white_on_reg_read = device.smbus_read_byte_data(white_on_reg).unwrap_or(0);
+        let white_off_reg_read = device.smbus_read_byte_data(white_off_reg).unwrap_or(0);
+        let red_on_reg_read = device.smbus_read_byte_data(red_on_reg).unwrap_or(0);
+        let red_off_reg_read = device.smbus_read_byte_data(red_off_reg).unwrap_or(0);
+        let blink_read = device.smbus_read_byte_data(strip_map.blink_reg).unwrap_or(0);
 
         strips.push(StripState {
             name: strip_map.name.to_string(),
-            white_on,
-            red_on,
+
+            // const map
             white_on_reg: strip_map.white_on_reg,
-            white_on_val: strip_map.white_on_val,
+            white_on_val: white_on_reg_read,
             white_off_reg: strip_map.white_off_reg,
-            white_off_val: strip_map.white_off_val,
+            white_off_val: white_off_reg_read,
             red_on_reg: strip_map.red_on_reg,
-            red_on_val: strip_map.red_on_val,
+            red_on_val: red_on_reg_read,
             red_off_reg: strip_map.red_off_reg,
-            red_off_val: strip_map.red_off_val,
-            blink_on_reg: strip_map.blink_on_reg,
-            blink_on_value,
-            blink_off_reg: strip_map.blink_off_reg,
-            blink_off_value: strip_map.blink_off_val,
+            red_off_val: red_off_reg_read,
+            blink_reg: strip_map.blink_on_reg,
+            blink_val: blink_read
         });
     }
 

@@ -214,8 +214,7 @@ fn debug_check_status() {
                     strip.white_off_reg, strip.white_off_val,
                     strip.red_on_reg, strip.red_on_val,
                     strip.red_off_reg, strip.red_off_val,
-                    strip.blink_on_reg, strip.blink_on_value,
-                    strip.blink_off_reg, strip.blink_off_value);
+                    strip.blink_reg, strip.blink_val);
             }
         }
         Err(e) => {
