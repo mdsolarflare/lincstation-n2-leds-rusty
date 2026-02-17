@@ -217,57 +217,12 @@ impl LedCommand {
 }
 
 // ============================================================================
-// TEST/DEBUG COMMANDS
+// TEST/DEBUG COMMANDS (moved to `main.rs`)
+// ----------------------------------------------------------------------------
+// Helper test functions were moved into `src/main.rs` to avoid duplicate
+// boilerplate and keep the service module focused on the command model and
+// hardware access. See the TEST/DEBUG HELPERS section in `main.rs`.
 // ============================================================================
-
-/// Create sequence of commands for: all lights red
-pub fn test_all_lights_red() -> Vec<LedCommand> {
-    // Use the batch command so the test runner executes one atomic operation
-    // that sets the bar and turns RED ON for every strip (same timing strategy).
-    vec![LedCommand::AllStripsRed]
-}
-
-
-// TODO -- move this and all debug test methods to main.rs
-/// Run hardware test: sequentially turn OFF bar + white/red/blink per strip with 1s delay
-///
-/// This uses the public `execute_command` path so the same command logic
-/// and state-updates are exercised during the test.
-pub fn run_test_all_off(bus: i32) -> Result<(), String> {
-    let mut state = LedControllerState::new();
-
-    // Use the batch operation so we don't repeat the same write logic here
-    execute_command(bus, &mut state, LedCommand::AllLEDsOff)?;
-    println!("  All LEDs turned OFF");
-
-    Ok(())
-}
-
-/// Run hardware test: set bar -> Solid/255/White and turn WHITE on for every strip
-///
-/// This mirrors `run_test_all_off` but uses the `AllStripsWhite` batch command so
-/// the same execution path (and timing) is exercised as the production code.
-pub fn run_test_all_white(bus: i32) -> Result<(), String> {
-    let mut state = LedControllerState::new();
-
-    // Delegate to the batch command which applies bar + per-strip white writes
-    execute_command(bus, &mut state, LedCommand::AllStripsWhite)?;
-    println!("  Bar set to WHITE and all strips WHITE turned ON");
-
-    Ok(())
-}
-
-/// Run hardware test: set bar -> Solid/255/Red and turn RED on for every strip
-///
-/// Mirrors `run_test_all_white` but exercises the red-channel per-strip writes.
-pub fn run_test_all_red(bus: i32) -> Result<(), String> {
-    let mut state = LedControllerState::new();
-
-    execute_command(bus, &mut state, LedCommand::AllStripsRed)?;
-    println!("  Bar set to RED and all strips RED turned ON");
-
-    Ok(())
-}
 
 // ============================================================================
 // HARDWARE COMMUNICATION
@@ -689,7 +644,7 @@ fn _write_bar_color(bus: i32, color: LedColor) -> Result<(), String> {
 
     let (red, green, blue) = color_to_rgb(color);
 
-    // Write to all three color register sets (solid, breath 1, breath 2)
+    // Write to all three color register sets (solid, breath, loop)
     device
         .smbus_write_byte_data(0x92, red)
         .map_err(|e| format!("Failed to set red: {}", e))?;

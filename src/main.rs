@@ -9,7 +9,7 @@ mod services;
 use services::disk_status::{check_drive_status, detect_all_devices, build_device_report_list, DriveStatus, SLOTS};
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
-    execute_command, run_test_all_off, run_test_all_white, run_test_all_red,
+    execute_command,
     read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
 };
 
@@ -253,6 +253,46 @@ fn debug_check_status() {
 // ============================================================================
 // TEST/DEBUG HELPERS
 // ============================================================================
+
+/// Run hardware test: sequentially turn OFF bar + white/red/blink per strip with 1s delay
+///
+/// This uses the public `execute_command` path so the same command logic
+/// and state-updates are exercised during the test.
+fn run_test_all_off(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    // Use the batch operation so we don't repeat the same write logic here
+    execute_command(bus, &mut state, LedCommand::AllLEDsOff)?;
+    println!("  All LEDs turned OFF");
+
+    Ok(())
+}
+
+/// Run hardware test: set bar -> Solid/255/White and turn WHITE on for every strip
+///
+/// This mirrors `run_test_all_off` but uses the `AllStripsWhite` batch command so
+/// the same execution path (and timing) is exercised as the production code.
+fn run_test_all_white(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    // Delegate to the batch command which applies bar + per-strip white writes
+    execute_command(bus, &mut state, LedCommand::AllStripsWhite)?;
+    println!("  Bar set to WHITE and all strips WHITE turned ON");
+
+    Ok(())
+}
+
+/// Run hardware test: set bar -> Solid/255/Red and turn RED on for every strip
+///
+/// Mirrors `run_test_all_white` but exercises the red-channel per-strip writes.
+fn run_test_all_red(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    execute_command(bus, &mut state, LedCommand::AllStripsRed)?;
+    println!("  Bar set to RED and all strips RED turned ON");
+
+    Ok(())
+}
 
 /// Parse --bus argument from command line args
 fn parse_bus_arg(args: &[String]) -> i32 {
