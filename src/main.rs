@@ -204,11 +204,11 @@ fn debug_check_status() {
             println!("    Standard On/Off: 0xA0 / 0xB0");
             println!("    NVME     On/Off: 0xA1 / 0xB1");
             println!("\n  Strip States:");
-            println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | R_OFF  | R_OFF_V | B_ON   | B_ON_V | B_OFF  | B_OFF_V", 
+            println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | R_OFF  | R_OFF_V | B_REG  | B_VAL", 
                 "Name");
-            println!("    {}", "-".repeat(130));
+            println!("    {}", "-".repeat(110));
             for strip in &strip_regs.strips {
-                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}", 
+                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}", 
                     strip.name,
                     strip.white_on_reg, strip.white_on_val,
                     strip.white_off_reg, strip.white_off_val,
