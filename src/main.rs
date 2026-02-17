@@ -12,6 +12,7 @@ use services::led_controller::{
     execute_command,
     read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
 };
+use crate::services::led_controller::{LedBar, LedBarMode};
 
 // Configuration for your specific hardware
 #[allow(dead_code)]
@@ -72,6 +73,16 @@ fn main() {
                     Ok(_) => println!("\n✓ test-all-red completed successfully"),
                     Err(e) => {
                         eprintln!("✗ test-all-red failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            "test-led-bar" => {
+                let bus = parse_bus_arg(&args);
+                match run_test_led_bar(&args, bus) {
+                    Ok(_) => println!("\n✓ test-led-bar completed successfully"),
+                    Err(e) => {
+                        eprintln!("✗ test-led-bar failed: {}", e);
                         std::process::exit(1);
                     }
                 }
@@ -254,6 +265,99 @@ fn debug_check_status() {
 // TEST/DEBUG HELPERS
 // ============================================================================
 
+/// Parse test-led-bar arguments and execute the command
+///
+/// Arguments:
+/// --color <name>     Main color (required): red, blue, green, yellow, cyan, magenta, orange, purple, white, black
+/// --loopcolor <name> Loop color (optional): defaults to main color
+/// --breathing        Use breath mode instead of solid/loop
+///
+/// Examples:
+/// test-led-bar --color red --loopcolor blue     → loop, 255, red, blue
+/// test-led-bar --loopcolor yellow --color green → loop, 255, green, yellow
+/// test-led-bar --color orange                   → solid, 255, orange, orange
+/// test-led-bar --color orange --breathing       → breath, 255, orange, orange
+fn run_test_led_bar(args: &[String], bus: i32) -> Result<(), String> {
+    let mut color: Option<LedColor> = None;
+    let mut loop_color: Option<LedColor> = None;
+    let mut is_breathing = false;
+
+    let mut args_iter = args.iter().skip(2).peekable();
+
+    while let Some(arg) = args_iter.next() {
+        match arg.as_str() {
+            "--color" => {
+                if let Some(color_str) = args_iter.peek() {
+                    color = Some(parse_color_argument(color_str)?);
+                    args_iter.next(); // consume the value
+                }
+            }
+            "--loopcolor" => {
+                if let Some(loop_color_str) = args_iter.peek() {
+                    loop_color = Some(parse_color_argument(loop_color_str)?);
+                    args_iter.next(); // consume the value
+                }
+            }
+            "--breathing" => {
+                is_breathing = true;
+            }
+            _ => {}
+        }
+    }
+
+    let color = color.ok_or_else(|| "Missing required argument: --color".to_string())?;
+    let loop_color = loop_color.unwrap_or(color);
+
+    // Determine mode based on arguments
+    let mode = if is_breathing {
+        LedBarMode::Breath
+    } else if loop_color != color {
+        LedBarMode::Loop
+    } else {
+        LedBarMode::Solid
+    };
+
+    let bar = LedBar {
+        mode,
+        brightness: 255,
+        color,
+        loop_color,
+    };
+
+    println!("\n╔═══════════════════════════════════════════════════════════════╗");
+    println!("║                    LED Bar Test Command                        ║");
+    println!("╚═══════════════════════════════════════════════════════════════╝\n");
+
+    println!("Applying bar configuration:");
+    println!("  Mode:      {:?}", mode);
+    println!("  Brightness: {}", bar.brightness);
+    println!("  Color:     {:?}", color);
+    println!("  LoopColor: {:?}", loop_color);
+
+    let mut state = LedControllerState::new();
+    execute_command(bus, &mut state, LedCommand::ApplyBar(bar))?;
+
+    Ok(())
+}
+
+/// Parse a color argument string to LedColor enum
+fn parse_color_argument(color_str: &str) -> Result<LedColor, String> {
+    match color_str.to_lowercase().as_str() {
+        "black" | "off" => Ok(LedColor::Black),
+        "white" => Ok(LedColor::White),
+        "red" => Ok(LedColor::Red),
+        "blue" => Ok(LedColor::Blue),
+        "green" => Ok(LedColor::Green),
+        "yellow" => Ok(LedColor::Yellow),
+        "cyan" => Ok(LedColor::Cyan),
+        "magenta" => Ok(LedColor::Magenta),
+        "orange" => Ok(LedColor::Orange),
+        "purple" => Ok(LedColor::Purple),
+        "softwhite" => Ok(LedColor::SoftWhite),
+        _ => Err(format!("Unknown color '{}'. Valid colors: black, white, red, blue, green, yellow, cyan, magenta, orange, purple, softwhite", color_str))
+    }
+}
+
 /// Run hardware test: sequentially turn OFF bar + white/red/blink per strip with 1s delay
 ///
 /// This uses the public `execute_command` path so the same command logic
@@ -313,40 +417,6 @@ fn parse_bus_arg(args: &[String]) -> i32 {
         None => {
             eprintln!("Could not find I2C LED controller. Use --bus N to specify manually.");
             std::process::exit(1);
-        }
-    }
-}
-
-/// Execute a test command sequence
-fn test_command(test_name: &str, bus: i32, commands: Vec<LedCommand>) {
-    println!("\n╔═══════════════════════════════════════════════════════════════╗");
-    println!("║  Test: {}  {}", test_name, "   ".repeat((20 - test_name.len()) / 3));
-    println!("║  I2C Bus: {}  {}", bus, " ".repeat(52 - test_name.len()));
-    println!("╚═══════════════════════════════════════════════════════════════╝\n");
-
-    let mut state = LedControllerState::new();
-    
-    for (i, cmd) in commands.iter().enumerate() {
-        println!("[{}] {}", i + 1, cmd.describe());
-        
-        match execute_command(bus, &mut state, cmd.clone()) {
-            Ok(_) => println!("     ✓ Success"),
-            Err(e) => {
-                eprintln!("     ✗ Error: {}", e);
-                std::process::exit(1);
-            }
-        }
-    }
-    
-    println!("\n✓ Test completed successfully!");
-    println!("Final LED State:");
-    println!("  Bar: mode={:?}, brightness={}, color={:?}", 
-        state.bar.mode, state.bar.brightness, state.bar.color);
-    
-    println!("  Strips:");
-    for name in LED_STRIP_NAMES {
-        if let Some(strip) = state.get_strip(name) {
-            println!("    {}: {}", name, strip.describe());
         }
     }
 }
