@@ -178,7 +178,8 @@ pub enum LedCommand {
     ApplyBar(LedBar),
 
     // Individual LED strip commands
-    SetStripColor(String, bool, bool), // name, white_on, red_on
+    SetStripWhite(String, bool),       // name, white_on
+    SetStripRed(String, bool),         // name, red_on
     SetStripWhiteBlinking(String, bool), // name, enabled
     ApplyStrip(String, LedStrip),
 
@@ -195,8 +196,11 @@ impl LedCommand {
             Self::SetBarBrightness(b) => format!("Set bar brightness to {}", b),
             Self::SetBarColor(c) => format!("Set bar color to {:?}", c),
             Self::ApplyBar(bar) => format!("Apply bar: {:?} @ {}", bar.mode, bar.brightness),
-            Self::SetStripColor(name, w, r) => {
-                format!("Set {} to white={} red={}", name, w, r)
+            Self::SetStripWhite(name, w) => {
+                format!("Set {} white={}", name, w)
+            }
+            Self::SetStripRed(name, r) => {
+                format!("Set {} red={}", name, r)
             }
             Self::SetStripWhiteBlinking(name, enabled) => {
                 format!("Set {} white blinking to {}", name, enabled)
@@ -214,21 +218,6 @@ impl LedCommand {
 // TEST/DEBUG COMMANDS
 // ============================================================================
 
-/// Create sequence of commands for: all lights off
-pub fn test_all_lights_off() -> Vec<LedCommand> {
-    let mut cmds = vec![
-        LedCommand::SetBarMode(LedBarMode::Solid),
-        LedCommand::SetBarBrightness(0),
-        LedCommand::SetBarColor(LedColor::Black),
-    ];
-    
-    for name in LED_STRIP_NAMES {
-        cmds.push(LedCommand::SetStripColor(name.to_string(), false, false));
-        cmds.push(LedCommand::SetStripWhiteBlinking(name.to_string(), false));
-    }
-    
-    cmds
-}
 
 /// Create sequence of commands for: all lights white with blinking
 pub fn test_all_lights_white() -> Vec<LedCommand> {
@@ -239,8 +228,7 @@ pub fn test_all_lights_white() -> Vec<LedCommand> {
     ];
     
     for name in LED_STRIP_NAMES {
-        cmds.push(LedCommand::SetStripColor(name.to_string(), true, false));
-        cmds.push(LedCommand::SetStripWhiteBlinking(name.to_string(), true));
+        cmds.push(LedCommand::SetStripWhite(name.to_string(), true));
     }
     
     cmds
@@ -255,11 +243,45 @@ pub fn test_all_lights_red() -> Vec<LedCommand> {
     ];
     
     for name in LED_STRIP_NAMES {
-        cmds.push(LedCommand::SetStripColor(name.to_string(), false, true));
-        cmds.push(LedCommand::SetStripWhiteBlinking(name.to_string(), false));
+        cmds.push(LedCommand::SetStripRed(name.to_string(), true));
     }
     
     cmds
+}
+
+/// Run hardware test: sequentially turn OFF bar + white/red/blink per strip with 1s delay
+///
+/// This uses the public `execute_command` path so the same command logic
+/// and state-updates are exercised during the test.
+pub fn run_test_all_off(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    // Turn the bar off via commands (reuses write helpers)
+    execute_command(bus, &mut state, LedCommand::SetBarMode(LedBarMode::Solid))?;
+    execute_command(bus, &mut state, LedCommand::SetBarBrightness(0))?;
+    execute_command(bus, &mut state, LedCommand::SetBarColor(LedColor::Black))?;
+    println!("  Bar turned OFF");
+
+    // Per-strip: use the command API so behavior is consistent across code paths
+    for strip_map in STRIP_REGISTERS.iter() {
+        let name = strip_map.name.to_string();
+
+        // 1) Set white -> OFF, then wait 1s
+        execute_command(bus, &mut state, LedCommand::SetStripWhite(name.clone(), false))?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // 2) Set red -> OFF, then wait 1s
+        execute_command(bus, &mut state, LedCommand::SetStripRed(name.clone(), false))?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        // 3) Disable blinking, then wait 1s
+        execute_command(bus, &mut state, LedCommand::SetStripWhiteBlinking(name.clone(), false))?;
+        std::thread::sleep(std::time::Duration::from_secs(1));
+
+        println!("  Turned OFF: {}", strip_map.name);
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -451,7 +473,25 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             } else {
                 return Err(format!("Unknown strip: {}", name));
             }
-            _write_strip_color(bus, &name, white, red)?;
+            // compatibility: delegate to per-channel writers
+            _write_strip_white(bus, &name, white)?;
+            _write_strip_red(bus, &name, red)?;
+        }
+        LedCommand::SetStripWhite(name, white) => {
+            if let Some(strip) = state.get_strip_mut(&name) {
+                strip.white_on = white;
+            } else {
+                return Err(format!("Unknown strip: {}", name));
+            }
+            _write_strip_white(bus, &name, white)?;
+        }
+        LedCommand::SetStripRed(name, red) => {
+            if let Some(strip) = state.get_strip_mut(&name) {
+                strip.red_on = red;
+            } else {
+                return Err(format!("Unknown strip: {}", name));
+            }
+            _write_strip_red(bus, &name, red)?;
         }
         LedCommand::SetStripWhiteBlinking(name, enabled) => {
             if let Some(strip) = state.get_strip_mut(&name) {
@@ -464,7 +504,9 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         LedCommand::ApplyStrip(name, strip) => {
             if state.strips.contains_key(&name) {
                 state.strips.insert(name.clone(), strip);
-                _write_strip_color(bus, &name, strip.white_on, strip.red_on)?;
+                // update white and red separately to avoid concurrent register collisions
+                _write_strip_white(bus, &name, strip.white_on)?;
+                _write_strip_red(bus, &name, strip.red_on)?;
                 _write_strip_blinking(bus, &name, strip.white_blinking)?;
             } else {
                 return Err(format!("Unknown strip: {}", name));
@@ -474,7 +516,8 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         // Batch operations
         LedCommand::AllStripsOff => {
             for name in LED_STRIP_NAMES {
-                execute_command(bus, state, LedCommand::SetStripColor(name.to_string(), false, false))?;
+                execute_command(bus, state, LedCommand::SetStripWhite(name.to_string(), false))?;
+                execute_command(bus, state, LedCommand::SetStripRed(name.to_string(), false))?;
             }
         }
         LedCommand::AllLEDsOff => {
@@ -486,7 +529,8 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             _write_bar_brightness(bus, 0)?;
             _write_bar_color(bus, LedColor::Black)?;
             for name in LED_STRIP_NAMES {
-                _write_strip_color(bus, name, false, false)?;
+                _write_strip_white(bus, name, false)?;
+                _write_strip_red(bus, name, false)?;
                 _write_strip_blinking(bus, name, false)?;
             }
         }
@@ -665,8 +709,8 @@ fn _write_bar_color(bus: i32, color: LedColor) -> Result<(), String> {
         .map_err(|e| format!("Failed to set loop color 2 blue: {}", e))
 }
 
-/// Write LED strip color (white and red on/off)
-fn _write_strip_color(bus: i32, name: &str, white_on: bool, red_on: bool) -> Result<(), String> {
+/// Write only the white channel for a strip (separate from red)
+fn _write_strip_white(bus: i32, name: &str, white_on: bool) -> Result<(), String> {
     let dev_path = format!("/dev/i2c-{}", bus);
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
@@ -674,26 +718,34 @@ fn _write_strip_color(bus: i32, name: &str, white_on: bool, red_on: bool) -> Res
     let reg_map = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
-    // Write white channel
     if white_on {
         device
             .smbus_write_byte_data(reg_map.white_on_reg, reg_map.white_on_val)
-            .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))
     } else {
         device
             .smbus_write_byte_data(reg_map.white_off_reg, reg_map.white_off_val)
-            .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))
     }
+}
 
-    // Write red channel
+/// Write only the red channel for a strip (separate from white)
+fn _write_strip_red(bus: i32, name: &str, red_on: bool) -> Result<(), String> {
+    let dev_path = format!("/dev/i2c-{}", bus);
+    let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
+        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+
+    let reg_map = _get_strip_register_map(name)
+        .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
+
     if red_on {
         device
             .smbus_write_byte_data(reg_map.red_on_reg, reg_map.red_on_val)
-            .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))
     } else {
         device
             .smbus_write_byte_data(reg_map.red_off_reg, reg_map.red_off_val)
-            .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))?;
+            .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))
     }
 
     Ok(())

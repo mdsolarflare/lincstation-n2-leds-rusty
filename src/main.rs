@@ -9,7 +9,7 @@ mod services;
 use services::disk_status::{check_drive_status, detect_all_devices, build_device_report_list, DriveStatus, SLOTS};
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
-    execute_command, test_all_lights_off, test_all_lights_white, test_all_lights_red,
+    execute_command, run_test_all_off, test_all_lights_white, test_all_lights_red,
     read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
 };
 
@@ -48,7 +48,13 @@ fn main() {
             "check-status" => debug_check_status(),
             "test-all-off" => {
                 let bus = parse_bus_arg(&args);
-                test_command("All Lights Off", bus, test_all_lights_off());
+                match run_test_all_off(bus) {
+                    Ok(_) => println!("\n✓ test-all-off completed successfully"),
+                    Err(e) => {
+                        eprintln!("✗ test-all-off failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             "test-all-white" => {
                 let bus = parse_bus_arg(&args);
