@@ -29,6 +29,7 @@ pub enum LedColor {
     Magenta,
     Orange,
     Purple,
+    SoftWhite,
 }
 
 impl Default for LedColor {
@@ -41,7 +42,8 @@ impl Default for LedColor {
 pub fn color_to_rgb(color: LedColor) -> (u8, u8, u8) {
     match color {
         LedColor::Black => (0, 0, 0),
-        LedColor::White => (225, 225, 225),
+        LedColor::White => (255, 255, 255),
+        LedColor::SoftWhite => (225, 225, 225),
         LedColor::Red => (255, 0, 0),
         LedColor::Blue => (0, 0, 255),
         LedColor::Green => (0, 255, 0),
@@ -60,6 +62,7 @@ pub struct LedBar {
     pub mode: LedBarMode,
     pub brightness: u8, // 0-255
     pub color: LedColor,
+    pub loop_color: LedColor
 }
 
 impl Default for LedBar {
@@ -67,7 +70,8 @@ impl Default for LedBar {
         Self {
             mode: LedBarMode::Loop,
             brightness: 255,
-            color: LedColor::Red,
+            color: LedColor::Yellow,
+            loop_color: LedColor::Green
         }
     }
 }
@@ -102,7 +106,7 @@ impl LedStrip {
             (false, false) => "off",
             (true, false) => "white",
             (false, true) => "red",
-            (true, true) => "orange", // red + white
+            (true, true) => "", // red + white
         }
     }
 
@@ -172,16 +176,12 @@ impl LedControllerState {
 #[allow(dead_code)]  // Some variants planned for future use
 pub enum LedCommand {
     // LED Bar commands
-    SetBarMode(LedBarMode),
-    SetBarBrightness(u8),
-    SetBarColor(LedColor),
     ApplyBar(LedBar),
 
     // Individual LED strip commands
     SetStripWhite(String, bool),       // name, white_on
     SetStripRed(String, bool),         // name, red_on
     SetStripWhiteBlinking(String, bool), // name, enabled
-    ApplyStrip(String, LedStrip),
 
     // Batch operations
     AllStripsWhite,     // set bar -> solid/255/white and set every strip white ON
@@ -189,13 +189,11 @@ pub enum LedCommand {
     AllLEDsOff,
 }
 
+// TODO improve this
 impl LedCommand {
     /// Human-readable description of the command
     pub fn describe(&self) -> String {
         match self {
-            Self::SetBarMode(mode) => format!("Set bar mode to {:?}", mode),
-            Self::SetBarBrightness(b) => format!("Set bar brightness to {}", b),
-            Self::SetBarColor(c) => format!("Set bar color to {:?}", c),
             Self::ApplyBar(bar) => format!("Apply bar: {:?} @ {}", bar.mode, bar.brightness),
             Self::SetStripWhite(name, w) => {
                 format!("Set {} white={}", name, w)
@@ -205,9 +203,6 @@ impl LedCommand {
             }
             Self::SetStripWhiteBlinking(name, enabled) => {
                 format!("Set {} white blinking to {}", name, enabled)
-            }
-            Self::ApplyStrip(name, strip) => {
-                format!("Apply {}: {}", name, strip.describe())
             }
             Self::AllStripsWhite => "Set bar to white and turn WHITE ON for every strip".to_string(),
             Self::AllStripsRed => "Set bar to red and turn RED ON for every strip".to_string(),
@@ -386,23 +381,9 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
 pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand) -> Result<(), String> {
     match cmd {
         // LED Bar commands
-        LedCommand::SetBarMode(mode) => {
-            state.bar.mode = mode;
-            _write_bar_mode(bus, mode)?;
-        }
-        LedCommand::SetBarBrightness(brightness) => {
-            state.bar.brightness = brightness;
-            _write_bar_brightness(bus, brightness)?;
-        }
-        LedCommand::SetBarColor(color) => {
-            state.bar.color = color;
-            _write_bar_color(bus, color)?;
-        }
         LedCommand::ApplyBar(bar) => {
             state.bar = bar.clone();
-            _write_bar_mode(bus, bar.mode)?;
-            _write_bar_brightness(bus, bar.brightness)?;
-            _write_bar_color(bus, bar.color)?;
+            _write_led_bar(bus, bar.mode, bar.brightness, bar.color, bar.loop_color)?;
         }
         LedCommand::SetStripWhite(name, white) => {
             if let Some(strip) = state.get_strip_mut(&name) {
@@ -428,17 +409,6 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             }
             _write_strip_blinking(bus, &name, enabled)?;
         }
-        LedCommand::ApplyStrip(name, strip) => {
-            if state.strips.contains_key(&name) {
-                state.strips.insert(name.clone(), strip);
-                // update white and red separately to avoid concurrent register collisions
-                _write_strip_white(bus, &name, strip.white_on)?;
-                _write_strip_red(bus, &name, strip.red_on)?;
-                _write_strip_blinking(bus, &name, strip.white_blinking)?;
-            } else {
-                return Err(format!("Unknown strip: {}", name));
-            }
-        }
 
         // Batch operations
         LedCommand::AllStripsWhite => {
@@ -446,9 +416,7 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             state.bar.mode = LedBarMode::Solid;
             state.bar.brightness = 255;
             state.bar.color = LedColor::White;
-            _write_bar_mode(bus, LedBarMode::Solid)?;
-            _write_bar_brightness(bus, 255)?;
-            _write_bar_color(bus, LedColor::White)?;
+            _write_led_bar(bus, LedBarMode::Solid, 255, LedColor::White, LedColor::White)?;
 
             // turn WHITE ON for every strip (do not change red/blink)
             for name in LED_STRIP_NAMES {
@@ -464,12 +432,10 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
 
         LedCommand::AllStripsRed => {
             // set bar to solid / max brightness / red
+            _write_led_bar(bus, LedBarMode::Solid, 255, LedColor::Red, LedColor::Red)?;
             state.bar.mode = LedBarMode::Solid;
             state.bar.brightness = 255;
             state.bar.color = LedColor::Red;
-            _write_bar_mode(bus, LedBarMode::Solid)?;
-            _write_bar_brightness(bus, 255)?;
-            _write_bar_color(bus, LedColor::Red)?;
 
             // turn RED ON for every strip (do not change white/blink)
             for name in LED_STRIP_NAMES {
@@ -488,9 +454,7 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             for name in LED_STRIP_NAMES {
                 state.strips.insert(name.to_string(), LedStrip::default());
             }
-            _write_bar_mode(bus, LedBarMode::Solid)?;
-            _write_bar_brightness(bus, 0)?;
-            _write_bar_color(bus, LedColor::Black)?;
+            _write_led_bar(bus, LedBarMode::Solid, 0, LedColor::Black, LedColor::Black)?;
             for name in LED_STRIP_NAMES {
                 _write_strip_white(bus, name, false)?;
                 std::thread::sleep(std::time::Duration::from_millis(1000));
@@ -615,32 +579,18 @@ fn _get_strip_register_map(name: &str) -> Option<&'static StripRegisterMap> {
 // ============================================================================
 
 /// Write LED bar mode register (0x90)
-fn _write_bar_mode(bus: i32, mode: LedBarMode) -> Result<(), String> {
+fn _write_led_bar(bus: i32, mode: LedBarMode, brightness: u8, color: LedColor, loop_color:LedColor) -> Result<(), String> {
     let dev_path = format!("/dev/i2c-{}", bus);
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
     device
         .smbus_write_byte_data(0x90, mode as u8)
-        .map_err(|e| format!("Failed to set LED bar mode: {}", e))
-}
-
-/// Write LED bar brightness register (0x91)
-fn _write_bar_brightness(bus: i32, brightness: u8) -> Result<(), String> {
-    let dev_path = format!("/dev/i2c-{}", bus);
-    let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
-        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+        .map_err(|e| format!("Failed to set LED bar mode: {}", e))?;
 
     device
         .smbus_write_byte_data(0x91, brightness)
-        .map_err(|e| format!("Failed to set LED bar brightness: {}", e))
-}
-
-/// Write LED bar color registers (0x92-0x94 for all three color copies)
-fn _write_bar_color(bus: i32, color: LedColor) -> Result<(), String> {
-    let dev_path = format!("/dev/i2c-{}", bus);
-    let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
-        .map_err(|e| format!("Failed to open I2C device: {}", e))?;
+        .map_err(|e| format!("Failed to set LED bar brightness: {}", e))?;
 
     let (red, green, blue) = color_to_rgb(color);
 
@@ -666,6 +616,8 @@ fn _write_bar_color(bus: i32, color: LedColor) -> Result<(), String> {
         .smbus_write_byte_data(0x97, blue)
         .map_err(|e| format!("Failed to set loop color 1 blue: {}", e))?;
 
+    let (red, green, blue) = color_to_rgb(loop_color);
+
     device
         .smbus_write_byte_data(0x98, red)
         .map_err(|e| format!("Failed to set loop color 2 red: {}", e))?;
@@ -674,7 +626,9 @@ fn _write_bar_color(bus: i32, color: LedColor) -> Result<(), String> {
         .map_err(|e| format!("Failed to set loop color 2 green: {}", e))?;
     device
         .smbus_write_byte_data(0x9A, blue)
-        .map_err(|e| format!("Failed to set loop color 2 blue: {}", e))
+        .map_err(|e| format!("Failed to set loop color 2 blue: {}", e))?;
+
+    Ok(())
 }
 
 /// Write only the white channel for a strip (separate from red)
