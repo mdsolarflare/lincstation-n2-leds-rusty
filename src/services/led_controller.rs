@@ -692,6 +692,8 @@ fn _write_strip_white(bus: i32, name: &str, white_on: bool) -> Result<(), String
             .smbus_write_byte_data(reg_map.white_off_reg, reg_map.white_off_val)
             .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))?;
     }
+
+    Ok(())
 }
 
 /// Write only the red channel for a strip (separate from white)
