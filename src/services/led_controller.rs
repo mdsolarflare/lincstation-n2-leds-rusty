@@ -208,7 +208,6 @@ impl LedCommand {
             Self::ApplyStrip(name, strip) => {
                 format!("Apply {}: {}", name, strip.describe())
             }
-            Self::AllStripsOff => "Turn all strips off".to_string(),
             Self::AllLEDsOff => "Turn all LEDs off (bar and strips)".to_string(),
         }
     }
@@ -464,19 +463,6 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             _write_bar_brightness(bus, bar.brightness)?;
             _write_bar_color(bus, bar.color)?;
         }
-
-        // LED Strip commands
-        LedCommand::SetStripColor(name, white, red) => {
-            if let Some(strip) = state.get_strip_mut(&name) {
-                strip.white_on = white;
-                strip.red_on = red;
-            } else {
-                return Err(format!("Unknown strip: {}", name));
-            }
-            // compatibility: delegate to per-channel writers
-            _write_strip_white(bus, &name, white)?;
-            _write_strip_red(bus, &name, red)?;
-        }
         LedCommand::SetStripWhite(name, white) => {
             if let Some(strip) = state.get_strip_mut(&name) {
                 strip.white_on = white;
@@ -514,12 +500,6 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         }
 
         // Batch operations
-        LedCommand::AllStripsOff => {
-            for name in LED_STRIP_NAMES {
-                execute_command(bus, state, LedCommand::SetStripWhite(name.to_string(), false))?;
-                execute_command(bus, state, LedCommand::SetStripRed(name.to_string(), false))?;
-            }
-        }
         LedCommand::AllLEDsOff => {
             state.bar = LedBar::default();
             for name in LED_STRIP_NAMES {
@@ -530,8 +510,13 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             _write_bar_color(bus, LedColor::Black)?;
             for name in LED_STRIP_NAMES {
                 _write_strip_white(bus, name, false)?;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
                 _write_strip_red(bus, name, false)?;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+
                 _write_strip_blinking(bus, name, false)?;
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         }
     }
