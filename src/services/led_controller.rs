@@ -721,11 +721,11 @@ fn _write_strip_white(bus: i32, name: &str, white_on: bool) -> Result<(), String
     if white_on {
         device
             .smbus_write_byte_data(reg_map.white_on_reg, reg_map.white_on_val)
-            .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))
+            .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))?;
     } else {
         device
             .smbus_write_byte_data(reg_map.white_off_reg, reg_map.white_off_val)
-            .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))
+            .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))?;
     }
 }
 
@@ -741,11 +741,11 @@ fn _write_strip_red(bus: i32, name: &str, red_on: bool) -> Result<(), String> {
     if red_on {
         device
             .smbus_write_byte_data(reg_map.red_on_reg, reg_map.red_on_val)
-            .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))
+            .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))?;
     } else {
         device
             .smbus_write_byte_data(reg_map.red_off_reg, reg_map.red_off_val)
-            .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))
+            .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))?;
     }
 
     Ok(())
