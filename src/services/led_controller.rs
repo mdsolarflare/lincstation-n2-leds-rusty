@@ -184,6 +184,8 @@ pub enum LedCommand {
     ApplyStrip(String, LedStrip),
 
     // Batch operations
+    AllStripsWhite,     // set bar -> solid/255/white and set every strip white ON
+    AllStripsRed,       // set bar -> solid/255/red and set every strip red ON
     AllLEDsOff,
 }
 
@@ -207,6 +209,8 @@ impl LedCommand {
             Self::ApplyStrip(name, strip) => {
                 format!("Apply {}: {}", name, strip.describe())
             }
+            Self::AllStripsWhite => "Set bar to white and turn WHITE ON for every strip".to_string(),
+            Self::AllStripsRed => "Set bar to red and turn RED ON for every strip".to_string(),
             Self::AllLEDsOff => "Turn all LEDs off (bar and strips)".to_string(),
         }
     }
@@ -216,35 +220,11 @@ impl LedCommand {
 // TEST/DEBUG COMMANDS
 // ============================================================================
 
-
-/// Create sequence of commands for: all lights white with blinking
-pub fn test_all_lights_white() -> Vec<LedCommand> {
-    let mut cmds = vec![
-        LedCommand::SetBarMode(LedBarMode::Solid),
-        LedCommand::SetBarBrightness(255),
-        LedCommand::SetBarColor(LedColor::White),
-    ];
-    
-    for name in LED_STRIP_NAMES {
-        cmds.push(LedCommand::SetStripWhite(name.to_string(), true));
-    }
-    
-    cmds
-}
-
 /// Create sequence of commands for: all lights red
 pub fn test_all_lights_red() -> Vec<LedCommand> {
-    let mut cmds = vec![
-        LedCommand::SetBarMode(LedBarMode::Solid),
-        LedCommand::SetBarBrightness(255),
-        LedCommand::SetBarColor(LedColor::Red),
-    ];
-    
-    for name in LED_STRIP_NAMES {
-        cmds.push(LedCommand::SetStripRed(name.to_string(), true));
-    }
-    
-    cmds
+    // Use the batch command so the test runner executes one atomic operation
+    // that sets the bar and turns RED ON for every strip (same timing strategy).
+    vec![LedCommand::AllStripsRed]
 }
 
 
@@ -259,6 +239,32 @@ pub fn run_test_all_off(bus: i32) -> Result<(), String> {
     // Use the batch operation so we don't repeat the same write logic here
     execute_command(bus, &mut state, LedCommand::AllLEDsOff)?;
     println!("  All LEDs turned OFF");
+
+    Ok(())
+}
+
+/// Run hardware test: set bar -> Solid/255/White and turn WHITE on for every strip
+///
+/// This mirrors `run_test_all_off` but uses the `AllStripsWhite` batch command so
+/// the same execution path (and timing) is exercised as the production code.
+pub fn run_test_all_white(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    // Delegate to the batch command which applies bar + per-strip white writes
+    execute_command(bus, &mut state, LedCommand::AllStripsWhite)?;
+    println!("  Bar set to WHITE and all strips WHITE turned ON");
+
+    Ok(())
+}
+
+/// Run hardware test: set bar -> Solid/255/Red and turn RED on for every strip
+///
+/// Mirrors `run_test_all_white` but exercises the red-channel per-strip writes.
+pub fn run_test_all_red(bus: i32) -> Result<(), String> {
+    let mut state = LedControllerState::new();
+
+    execute_command(bus, &mut state, LedCommand::AllStripsRed)?;
+    println!("  Bar set to RED and all strips RED turned ON");
 
     Ok(())
 }
@@ -480,6 +486,48 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         }
 
         // Batch operations
+        LedCommand::AllStripsWhite => {
+            // set bar to solid / max brightness / white
+            state.bar.mode = LedBarMode::Solid;
+            state.bar.brightness = 255;
+            state.bar.color = LedColor::White;
+            _write_bar_mode(bus, LedBarMode::Solid)?;
+            _write_bar_brightness(bus, 255)?;
+            _write_bar_color(bus, LedColor::White)?;
+
+            // turn WHITE ON for every strip (do not change red/blink)
+            for name in LED_STRIP_NAMES {
+                if let Some(s) = state.get_strip_mut(name) {
+                    s.white_on = true;
+                } else {
+                    state.strips.insert(name.to_string(), LedStrip { white_on: true, red_on: false, white_blinking: false });
+                }
+                _write_strip_white(bus, name, true)?;
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+
+        LedCommand::AllStripsRed => {
+            // set bar to solid / max brightness / red
+            state.bar.mode = LedBarMode::Solid;
+            state.bar.brightness = 255;
+            state.bar.color = LedColor::Red;
+            _write_bar_mode(bus, LedBarMode::Solid)?;
+            _write_bar_brightness(bus, 255)?;
+            _write_bar_color(bus, LedColor::Red)?;
+
+            // turn RED ON for every strip (do not change white/blink)
+            for name in LED_STRIP_NAMES {
+                if let Some(s) = state.get_strip_mut(name) {
+                    s.red_on = true;
+                } else {
+                    state.strips.insert(name.to_string(), LedStrip { white_on: false, red_on: true, white_blinking: false });
+                }
+                _write_strip_red(bus, name, true)?;
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        }
+
         LedCommand::AllLEDsOff => {
             state.bar = LedBar::default();
             for name in LED_STRIP_NAMES {
@@ -490,13 +538,13 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             _write_bar_color(bus, LedColor::Black)?;
             for name in LED_STRIP_NAMES {
                 _write_strip_white(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(1000));
 
                 _write_strip_red(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(1000));
 
                 _write_strip_blinking(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(500));
+                std::thread::sleep(std::time::Duration::from_millis(1000));
             }
         }
     }

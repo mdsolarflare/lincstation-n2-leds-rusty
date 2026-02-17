@@ -9,7 +9,7 @@ mod services;
 use services::disk_status::{check_drive_status, detect_all_devices, build_device_report_list, DriveStatus, SLOTS};
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
-    execute_command, run_test_all_off, test_all_lights_white, test_all_lights_red,
+    execute_command, run_test_all_off, run_test_all_white, run_test_all_red,
     read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
 };
 
@@ -58,11 +58,23 @@ fn main() {
             }
             "test-all-white" => {
                 let bus = parse_bus_arg(&args);
-                test_command("All Lights White", bus, test_all_lights_white());
+                match run_test_all_white(bus) {
+                    Ok(_) => println!("\n✓ test-all-white completed successfully"),
+                    Err(e) => {
+                        eprintln!("✗ test-all-white failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             "test-all-red" => {
                 let bus = parse_bus_arg(&args);
-                test_command("All Lights Red", bus, test_all_lights_red());
+                match run_test_all_red(bus) {
+                    Ok(_) => println!("\n✓ test-all-red completed successfully"),
+                    Err(e) => {
+                        eprintln!("✗ test-all-red failed: {}", e);
+                        std::process::exit(1);
+                    }
+                }
             }
             _ => {
                 eprintln!("Usage: ./lincstation-leds [check-status|test-all-off|test-all-white|test-all-red] [--bus N]");

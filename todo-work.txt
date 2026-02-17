@@ -1,0 +1,3 @@
+- fix the utilization on the disk states
+- implement the logging of "check-status"
+- properly implement updating the state of the led controller intended state. llm keeps screwing it up so let's do it last
