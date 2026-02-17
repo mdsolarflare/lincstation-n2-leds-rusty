@@ -329,10 +329,10 @@ fn run_test_led_bar(args: &[String], bus: i32) -> Result<(), String> {
     println!("╚═══════════════════════════════════════════════════════════════╝\n");
 
     println!("Applying bar configuration:");
-    println!("  Mode:      {:?}", mode);
+    println!("  Mode:      {:?}", bar.mode);
     println!("  Brightness: {}", bar.brightness);
-    println!("  Color:     {:?}", color);
-    println!("  LoopColor: {:?}", loop_color);
+    println!("  Color:     {:?}", bar.color);
+    println!("  LoopColor: {:?}", bar.loop_color);
 
     let mut state = LedControllerState::new();
     execute_command(bus, &mut state, LedCommand::ApplyBar(bar))?;
