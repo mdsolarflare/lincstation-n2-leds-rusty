@@ -405,7 +405,7 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
             red_on_val: red_on_reg_read,
             red_off_reg: strip_map.red_off_reg,
             red_off_val: red_off_reg_read,
-            blink_reg: strip_map.blink_on_reg,
+            blink_reg: strip_map.blink_reg,
             blink_val: blink_read
         });
     }
