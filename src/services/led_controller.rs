@@ -184,7 +184,6 @@ pub enum LedCommand {
     ApplyStrip(String, LedStrip),
 
     // Batch operations
-    AllStripsOff,
     AllLEDsOff,
 }
 
@@ -248,6 +247,8 @@ pub fn test_all_lights_red() -> Vec<LedCommand> {
     cmds
 }
 
+
+// TODO -- move this and all debug test methods to main.rs
 /// Run hardware test: sequentially turn OFF bar + white/red/blink per strip with 1s delay
 ///
 /// This uses the public `execute_command` path so the same command logic
@@ -255,30 +256,9 @@ pub fn test_all_lights_red() -> Vec<LedCommand> {
 pub fn run_test_all_off(bus: i32) -> Result<(), String> {
     let mut state = LedControllerState::new();
 
-    // Turn the bar off via commands (reuses write helpers)
-    execute_command(bus, &mut state, LedCommand::SetBarMode(LedBarMode::Solid))?;
-    execute_command(bus, &mut state, LedCommand::SetBarBrightness(0))?;
-    execute_command(bus, &mut state, LedCommand::SetBarColor(LedColor::Black))?;
-    println!("  Bar turned OFF");
-
-    // Per-strip: use the command API so behavior is consistent across code paths
-    for strip_map in STRIP_REGISTERS.iter() {
-        let name = strip_map.name.to_string();
-
-        // 1) Set white -> OFF, then wait 1s
-        execute_command(bus, &mut state, LedCommand::SetStripWhite(name.clone(), false))?;
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        // 2) Set red -> OFF, then wait 1s
-        execute_command(bus, &mut state, LedCommand::SetStripRed(name.clone(), false))?;
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        // 3) Disable blinking, then wait 1s
-        execute_command(bus, &mut state, LedCommand::SetStripWhiteBlinking(name.clone(), false))?;
-        std::thread::sleep(std::time::Duration::from_secs(1));
-
-        println!("  Turned OFF: {}", strip_map.name);
-    }
+    // Use the batch operation so we don't repeat the same write logic here
+    execute_command(bus, &mut state, LedCommand::AllLEDsOff)?;
+    println!("  All LEDs turned OFF");
 
     Ok(())
 }
