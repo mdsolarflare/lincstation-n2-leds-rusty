@@ -413,10 +413,11 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         // Batch operations
         LedCommand::AllStripsWhite => {
             // set bar to solid / max brightness / white
+            _write_led_bar(bus, LedBarMode::Solid, 255, LedColor::White, LedColor::White)?;
             state.bar.mode = LedBarMode::Solid;
             state.bar.brightness = 255;
             state.bar.color = LedColor::White;
-            _write_led_bar(bus, LedBarMode::Solid, 255, LedColor::White, LedColor::White)?;
+            state.bar.loop_color = LedColor::White;
 
             // turn WHITE ON for every strip (do not change red/blink)
             for name in LED_STRIP_NAMES {
@@ -436,6 +437,7 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             state.bar.mode = LedBarMode::Solid;
             state.bar.brightness = 255;
             state.bar.color = LedColor::Red;
+            state.bar.loop_color = LedColor::Red;
 
             // turn RED ON for every strip (do not change white/blink)
             for name in LED_STRIP_NAMES {
@@ -450,11 +452,14 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
         }
 
         LedCommand::AllLEDsOff => {
-            state.bar = LedBar::default();
             for name in LED_STRIP_NAMES {
                 state.strips.insert(name.to_string(), LedStrip::default());
             }
             _write_led_bar(bus, LedBarMode::Solid, 0, LedColor::Black, LedColor::Black)?;
+            state.bar.mode = LedBarMode::Solid;
+            state.bar.brightness = 0;
+            state.bar.color = LedColor::Black;
+            state.bar.loop_color = LedColor::Black;
             for name in LED_STRIP_NAMES {
                 _write_strip_white(bus, name, false)?;
                 std::thread::sleep(std::time::Duration::from_millis(1000));
