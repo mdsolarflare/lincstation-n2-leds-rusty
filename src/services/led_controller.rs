@@ -511,9 +511,8 @@ struct StripRegisterMap {
     red_on_val: u8,
     red_off_reg: u8,
     red_off_val: u8,
-    blink_on_reg: u8,
+    blink_reg: u8,
     blink_on_val: u8,
-    blink_off_reg: u8,
     blink_off_val: u8,
 }
 
@@ -524,8 +523,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB0, white_off_val: 0x01,
         red_on_reg: 0xA0, red_on_val: 0x02,
         red_off_reg: 0xB0, red_off_val: 0x02,
-        blink_on_reg: 0x50, blink_on_val: 0x01,
-        blink_off_reg: 0x50, blink_off_val: 0x00,
+        blink_reg: 0x50, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "MGMT",
@@ -533,8 +532,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB0, white_off_val: 0x40,
         red_on_reg: 0xA0, red_on_val: 0x80,
         red_off_reg: 0xB0, red_off_val: 0x80,
-        blink_on_reg: 0x56, blink_on_val: 0x01,
-        blink_off_reg: 0x56, blink_off_val: 0x00,
+        blink_reg: 0x56, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "SSD1",
@@ -542,8 +541,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB0, white_off_val: 0x04,
         red_on_reg: 0xA0, red_on_val: 0x08,
         red_off_reg: 0xB0, red_off_val: 0x08,
-        blink_on_reg: 0x52, blink_on_val: 0x01,
-        blink_off_reg: 0x52, blink_off_val: 0x00,
+        blink_reg: 0x52, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "SSD2",
@@ -551,8 +550,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB0, white_off_val: 0x10,
         red_on_reg: 0xA0, red_on_val: 0x20,
         red_off_reg: 0xB0, red_off_val: 0x20,
-        blink_on_reg: 0x54, blink_on_val: 0x01,
-        blink_off_reg: 0x54, blink_off_val: 0x00,
+        blink_reg: 0x54, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "NVME1",
@@ -560,8 +559,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB1, white_off_val: 0x01,
         red_on_reg: 0xA1, red_on_val: 0x02,
         red_off_reg: 0xB1, red_off_val: 0x02,
-        blink_on_reg: 0x58, blink_on_val: 0x01,
-        blink_off_reg: 0x58, blink_off_val: 0x00,
+        blink_reg: 0x58, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "NVME2",
@@ -569,8 +568,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB1, white_off_val: 0x04,
         red_on_reg: 0xA1, red_on_val: 0x08,
         red_off_reg: 0xB1, red_off_val: 0x08,
-        blink_on_reg: 0x5A, blink_on_val: 0x01,
-        blink_off_reg: 0x5A, blink_off_val: 0x00,
+        blink_reg: 0x5A, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "NVME3",
@@ -578,8 +577,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB1, white_off_val: 0x10,
         red_on_reg: 0xA1, red_on_val: 0x20,
         red_off_reg: 0xB1, red_off_val: 0x20,
-        blink_on_reg: 0x5C, blink_on_val: 0x01,
-        blink_off_reg: 0x5C, blink_off_val: 0x00,
+        blink_reg: 0x5C, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
     StripRegisterMap {
         name: "NVME4",
@@ -587,8 +586,8 @@ const STRIP_REGISTERS: &[StripRegisterMap] = &[
         white_off_reg: 0xB1, white_off_val: 0x40,
         red_on_reg: 0xA1, red_on_val: 0x80,
         red_off_reg: 0xB1, red_off_val: 0x80,
-        blink_on_reg: 0x5E, blink_on_val: 0x01,
-        blink_off_reg: 0x5E, blink_off_val: 0x00,
+        blink_reg: 0x5E, blink_on_val: 0x01,
+        blink_off_val: 0x00,
     },
 ];
 
@@ -711,11 +710,11 @@ fn _write_strip_blinking(bus: i32, name: &str, enabled: bool) -> Result<(), Stri
 
     if enabled {
         device
-            .smbus_write_byte_data(reg_map.blink_on_reg, reg_map.blink_on_val)
+            .smbus_write_byte_data(reg_map.blink_reg, reg_map.blink_on_val)
             .map_err(|e| format!("Failed to enable blinking for {}: {}", name, e))
     } else {
         device
-            .smbus_write_byte_data(reg_map.blink_off_reg, reg_map.blink_off_val)
+            .smbus_write_byte_data(reg_map.blink_reg, reg_map.blink_off_val)
             .map_err(|e| format!("Failed to disable blinking for {}: {}", name, e))
     }
 }
