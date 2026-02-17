@@ -391,7 +391,7 @@ pub fn read_led_strip_registers(bus: i32) -> Result<LedStripRegisters, String> {
         let white_off_reg_read = device.smbus_read_byte_data(strip_map.white_off_reg).unwrap_or(0);
         let red_on_reg_read = device.smbus_read_byte_data(strip_map.red_on_reg).unwrap_or(0);
         let red_off_reg_read = device.smbus_read_byte_data(strip_map.red_off_reg).unwrap_or(0);
-        let blink_read = device.smbus_read_byte_data(strip_map.strip_map.blink_reg).unwrap_or(0);
+        let blink_read = device.smbus_read_byte_data(strip_map.blink_reg).unwrap_or(0);
 
         strips.push(StripState {
             name: strip_map.name.to_string(),
