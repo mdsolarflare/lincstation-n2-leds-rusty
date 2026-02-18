@@ -128,6 +128,7 @@ impl LedStrip {
 
 /// Names of the 8 LED strips
 pub const LED_STRIP_NAMES: &[&str] = &["POWER", "MGMT", "SSD1", "SSD2", "NVME1", "NVME2", "NVME3", "NVME4"];
+pub const MINIMUM_WRITE_DELAY_MS: i8 = 10;
 
 /// Complete LED controller state - both bar and strips
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -583,55 +584,63 @@ fn _get_strip_register_map(name: &str) -> Option<&'static StripRegisterMap> {
 // HARDWARE REGISTER WRITES (Private Implementation)
 // ============================================================================
 
+/// Write a byte to an SMBus register with safe error handling and optional delay
+///
+/// This helper encapsulates the common pattern of writing to SMBus registers,
+/// converting I2C errors into descriptive strings, and adding a small delay
+/// between consecutive writes to ensure hardware stability.
+///
+/// # Arguments
+/// * `device` - The I2C device to write to
+/// * `register` - The register address (0-255)
+/// * `value` - The value to write (0-255)
+/// * `error_msg_format` - Format string for error messages with one {} placeholder for the original error
+///
+/// # Returns
+/// * `Ok(())` on success
+/// * `Err(String)` with a descriptive error message on failure
+fn smbus_write_with_delay<D: I2CDevice>(
+    device: &mut D,
+    register: u8,
+    value: u8
+) -> Result<(), String> {
+    // Perform the write operation
+    device
+        .smbus_write_byte_data(register, value)
+        .map_err(|e| format!("Error while writing to smbus: {}", e))?;
+
+    // Add a small delay after successful writes to ensure hardware stability
+    std::thread::sleep(std::time::Duration::from_millis(MINIMUM_WRITE_DELAY_MS as u64));
+
+    Ok(())
+}
+
 /// Write LED bar mode register (0x90)
 fn _write_led_bar(bus: i32, mode: LedBarMode, brightness: u8, color: LedColor, loop_color:LedColor) -> Result<(), String> {
     let dev_path = format!("/dev/i2c-{}", bus);
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
-    device
-        .smbus_write_byte_data(0x90, mode as u8)
-        .map_err(|e| format!("Failed to set LED bar mode: {}", e))?;
-
-    device
-        .smbus_write_byte_data(0x91, brightness)
-        .map_err(|e| format!("Failed to set LED bar brightness: {}", e))?;
+    smbus_write_with_delay(&mut device, 0x90, mode as u8)?;
+    smbus_write_with_delay(&mut device, 0x91, brightness)?;
 
     let (red, green, blue) = color_to_rgb(color);
 
     // Write to all three color register sets (solid, breath, loop)
-    device
-        .smbus_write_byte_data(0x92, red)
-        .map_err(|e| format!("Failed to set red: {}", e))?;
-    device
-        .smbus_write_byte_data(0x93, green)
-        .map_err(|e| format!("Failed to set green: {}", e))?;
-    device
-        .smbus_write_byte_data(0x94, blue)
-        .map_err(|e| format!("Failed to set blue: {}", e))?;
+    smbus_write_with_delay(&mut device, 0x92, red)?;
+    smbus_write_with_delay(&mut device, 0x93, green)?;
+    smbus_write_with_delay(&mut device, 0x94, blue)?;
 
     // Also set loop colors to same values
-    device
-        .smbus_write_byte_data(0x95, red)
-        .map_err(|e| format!("Failed to set loop color 1 red: {}", e))?;
-    device
-        .smbus_write_byte_data(0x96, green)
-        .map_err(|e| format!("Failed to set loop color 1 green: {}", e))?;
-    device
-        .smbus_write_byte_data(0x97, blue)
-        .map_err(|e| format!("Failed to set loop color 1 blue: {}", e))?;
+    smbus_write_with_delay(&mut device, 0x95, red)?;
+    smbus_write_with_delay(&mut device, 0x96, green)?;
+    smbus_write_with_delay(&mut device, 0x97, blue)?;
 
     let (red, green, blue) = color_to_rgb(loop_color);
 
-    device
-        .smbus_write_byte_data(0x98, red)
-        .map_err(|e| format!("Failed to set loop color 2 red: {}", e))?;
-    device
-        .smbus_write_byte_data(0x99, green)
-        .map_err(|e| format!("Failed to set loop color 2 green: {}", e))?;
-    device
-        .smbus_write_byte_data(0x9A, blue)
-        .map_err(|e| format!("Failed to set loop color 2 blue: {}", e))?;
+    smbus_write_with_delay(&mut device, 0x98, red)?;
+    smbus_write_with_delay(&mut device, 0x99, green)?;
+    smbus_write_with_delay(&mut device, 0x9A, blue)?;
 
     Ok(())
 }
@@ -642,20 +651,14 @@ fn _write_strip_white(bus: i32, name: &str, white_on: bool) -> Result<(), String
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
-    let reg_map = _get_strip_register_map(name)
+    let strip = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
     if white_on {
-        device
-            .smbus_write_byte_data(reg_map.white_on_reg, reg_map.white_on_val)
-            .map_err(|e| format!("Failed to turn on white for {}: {}", name, e))?;
+        smbus_write_with_delay(&mut device, strip.white_on_reg, strip.white_on_val)
     } else {
-        device
-            .smbus_write_byte_data(reg_map.white_off_reg, reg_map.white_off_val)
-            .map_err(|e| format!("Failed to turn off white for {}: {}", name, e))?;
+        smbus_write_with_delay(&mut device, strip.white_off_reg, strip.white_off_val)
     }
-
-    Ok(())
 }
 
 /// Write only the red channel for a strip (separate from white)
@@ -664,20 +667,14 @@ fn _write_strip_red(bus: i32, name: &str, red_on: bool) -> Result<(), String> {
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
-    let reg_map = _get_strip_register_map(name)
+    let strip = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
     if red_on {
-        device
-            .smbus_write_byte_data(reg_map.red_on_reg, reg_map.red_on_val)
-            .map_err(|e| format!("Failed to turn on red for {}: {}", name, e))?;
+        smbus_write_with_delay(&mut device, strip.red_on_reg, strip.red_on_val)
     } else {
-        device
-            .smbus_write_byte_data(reg_map.red_off_reg, reg_map.red_off_val)
-            .map_err(|e| format!("Failed to turn off red for {}: {}", name, e))?;
+        smbus_write_with_delay(&mut device, strip.red_off_reg, strip.red_off_val)
     }
-
-    Ok(())
 }
 
 /// Write LED strip blinking control
@@ -686,16 +683,12 @@ fn _write_strip_blinking(bus: i32, name: &str, enabled: bool) -> Result<(), Stri
     let mut device = LinuxI2CDevice::new(&dev_path, LED_CONTROLLER_ADDR)
         .map_err(|e| format!("Failed to open I2C device: {}", e))?;
 
-    let reg_map = _get_strip_register_map(name)
+    let strip = _get_strip_register_map(name)
         .ok_or_else(|| format!("Unknown LED strip: {}", name))?;
 
     if enabled {
-        device
-            .smbus_write_byte_data(reg_map.blink_reg, reg_map.blink_on_val)
-            .map_err(|e| format!("Failed to enable blinking for {}: {}", name, e))
+        smbus_write_with_delay(&mut device, strip.blink_reg, strip.blink_on_val)
     } else {
-        device
-            .smbus_write_byte_data(reg_map.blink_reg, reg_map.blink_off_val)
-            .map_err(|e| format!("Failed to disable blinking for {}: {}", name, e))
+        smbus_write_with_delay(&mut device, strip.blink_reg, strip.blink_off_val)
     }
 }
