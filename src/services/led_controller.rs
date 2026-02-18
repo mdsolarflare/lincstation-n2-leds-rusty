@@ -428,7 +428,6 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
                     state.strips.insert(name.to_string(), LedStrip { white_on: true, red_on: false, white_blinking: false });
                 }
                 _write_strip_white(bus, name, true)?;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
             }
         }
 
@@ -448,7 +447,6 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
                     state.strips.insert(name.to_string(), LedStrip { white_on: false, red_on: true, white_blinking: false });
                 }
                 _write_strip_red(bus, name, true)?;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
             }
         }
 
@@ -463,13 +461,8 @@ pub fn execute_command(bus: i32, state: &mut LedControllerState, cmd: LedCommand
             state.bar.loop_color = LedColor::Black;
             for name in LED_STRIP_NAMES {
                 _write_strip_white(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-
                 _write_strip_red(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-
                 _write_strip_blinking(bus, name, false)?;
-                std::thread::sleep(std::time::Duration::from_millis(1000));
             }
         }
     }
