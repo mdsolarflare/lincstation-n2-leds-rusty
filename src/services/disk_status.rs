@@ -2,6 +2,7 @@ use std::io;
 use std::fs;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
+use std::time::Instant;
 
 const ACTIVITY_SAMPLE_INTERVAL_MS: u64 = 1000; // milliseconds
 
@@ -23,9 +24,10 @@ pub struct DiskStats {
     pub device_name: String,
     pub prev_read_sectors: u64,
     pub prev_write_sectors: u64,
-    pub prev_write_time: u64,
     pub utilization_percent: f64,
     pub is_active: bool,
+    pub prev_io_time: u64,
+    pub prev_timestamp: Instant
 }
 
 /// Registry of all physical drive slots on the LincStation N2.
@@ -50,6 +52,7 @@ pub const SLOTS: &[DriveSlot] = &[
 pub fn read_disk_stats(disks: &mut [DiskStats]) -> io::Result<()> {
     let file = fs::File::open("/proc/diskstats")?;
     let reader = BufReader::new(file);
+    let current_time = Instant::now();
 
     for line in reader.lines() {
         let line = line?;
@@ -86,34 +89,33 @@ pub fn read_disk_stats(disks: &mut [DiskStats]) -> io::Result<()> {
         for disk in disks.iter_mut() {
             if disk.device_name == device_name {
                 // Calculate utilization based on I/O time
-                let mut time_diff = io_time as i64 - disk.prev_write_time as i64;
-                
-                if time_diff < 0 {
-                    // overflow: handle wrapping of u64
-                    time_diff += u64::MAX as i64;
-                }
-                
-                if time_diff >= 0 {
-                    let time_diff_f64 = time_diff as f64;
-                    // time_diff is in milliseconds, convert to microseconds and calculate percentage
-                    disk.utilization_percent = time_diff_f64
-                        * 1000.0  // convert from milliseconds to microseconds
-                        / ACTIVITY_SAMPLE_INTERVAL_MS as f64
-                        * 100.0;  // convert to percentage
-                    
+                if disk.prev_io_time > 0 {
+                    let io_time_delta = io_time.saturating_sub(disk.prev_io_time) as f64;
+
+                    // Convert sample interval to milliseconds for comparison
+                    // io_time is in milliseconds, so delta is already in ms
+                    let elapsed_ms = ACTIVITY_SAMPLE_INTERVAL_MS as f64;
+
+                    // Utilization = (io_time_delta / elapsed_time) * 100
+                    disk.utilization_percent = (io_time_delta / elapsed_ms) * 100.0;
+
                     if disk.utilization_percent > 100.0 {
                         disk.utilization_percent = 100.0;
                     }
+                } else {
+                    // First sample - can't calculate utilization yet
+                    disk.utilization_percent = 0.0;
                 }
 
                 // Check for activity (sectors read/written changed)
                 disk.is_active = read_sectors != disk.prev_read_sectors ||
-                                write_sectors != disk.prev_write_sectors;
+                    write_sectors != disk.prev_write_sectors;
 
                 // Update previous values
                 disk.prev_read_sectors = read_sectors;
                 disk.prev_write_sectors = write_sectors;
-                disk.prev_write_time = io_time;
+                disk.prev_io_time = io_time;
+                disk.prev_timestamp = current_time;
 
                 break;
             }
@@ -167,9 +169,10 @@ pub fn detect_all_devices() -> io::Result<Vec<DiskStats>> {
             device_name: device.clone(),
             prev_read_sectors: 0,
             prev_write_sectors: 0,
-            prev_write_time: 0,
             utilization_percent: 0.0,
             is_active: false,
+            prev_io_time: 0,
+            prev_timestamp: Instant::now(),
         })
         .collect();
 

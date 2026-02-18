@@ -10,7 +10,7 @@ use services::disk_status::{check_drive_status, detect_all_devices, build_device
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
     execute_command,
-    read_led_bar_registers, read_led_strip_registers, LED_STRIP_NAMES,
+    read_led_bar_registers, read_led_strip_registers,
 };
 use crate::services::led_controller::{LedBar, LedBarMode};
 
