@@ -192,10 +192,9 @@ fn debug_check_status() {
             match (initial, second) {
                 (Some(initial), Some(second)) => {
                     // Check if any I/O activity occurred by comparing sectors read/written
-                    let read_delta = second.sectors_read > initial.sectors_read;
-                    let write_delta = second.sectors_written > initial.sectors_written;
+                    let delta = second.ms_doing_io > initial.ms_doing_io;
 
-                    if read_delta || write_delta {
+                    if delta {
                         "Active".to_string()
                     } else {
                         "Inactive".to_string()
