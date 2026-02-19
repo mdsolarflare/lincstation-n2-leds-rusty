@@ -250,12 +250,16 @@ fn debug_check_status() {
             println!("✗ Failed to read LED strip registers: {}", e);
         }
     }
-    
+
     println!("\nTest Commands:");
     println!("  ./lincstation-leds test-all-off");
     println!("  ./lincstation-leds test-all-white");
     println!("  ./lincstation-leds test-all-red");
-    
+    println!("  ./lincstation-leds test-led-bar --color <color> [--loopcolor <color>] [--breathing]");
+    println!("    Examples:");
+    println!("      ./lincstation-leds test-led-bar --color red --loopcolor blue");
+    println!("      ./lincstation-leds test-led-bar --color orange");
+    println!("      ./lincstation-leds test-led-bar --color purple --breathing");
     println!("└───────────────────────────────────────────────────────────────────────┘\n");
 
     std::process::exit(0);
