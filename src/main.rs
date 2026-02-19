@@ -105,11 +105,12 @@ fn main() {
 
 
 /// Convert DriveStatus to LED color
-fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, Option<String>) {
+/// Convert DriveStatus to LED color and blink mode
+fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, bool) {
     match status {
-        DriveStatus::Healthy => (LedColor::Blue, Some("Drive present".into())),
-        DriveStatus::Missing => (LedColor::White, Some("No drive detected".into())),
-        DriveStatus::Degraded => (LedColor::Red, Some("Drive degraded".into())),
+        DriveStatus::Healthy => (LedColor::White, false),  // White, solid
+        DriveStatus::Missing => (LedColor::White, true),   // White, blinking
+        DriveStatus::Degraded => (LedColor::Red, false),   // Red, solid
     }
 }
 
@@ -155,7 +156,7 @@ fn debug_check_status() {
     }
 
     println!("{:<12} | {:<12} | {:<8} | {:<12} | {}",
-             "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "MESSAGE");
+             "DEVICE", "MAPPED SLOT", "COLOR", "ACTIVE", "MESSAGE");
     println!("{}", "-".repeat(73)); // This should align with the surrounding column sizes.
 
     for sys_name in report_rows {
@@ -167,33 +168,38 @@ fn debug_check_status() {
 
         // Determine Status (using initial stats)
         let status = check_drive_status(&sys_name);
-        let (color, msg) = drive_status_to_led_color(status);
-        let msg_str = msg.unwrap_or_else(|| "".to_string());
+        let (color, should_blink) = drive_status_to_led_color(status);
 
-        // Calculate utilization percentage using delta from initial to second stats
-        let util_str = {
+        // Build message string with activity and status info
+        let mut messages = Vec::new();
+        if should_blink {
+            messages.push("Drive missing".to_string());
+        } else {
+            match status {
+                DriveStatus::Healthy => messages.push("Drive present".to_string()),
+                DriveStatus::Missing => messages.push("No drive detected".to_string()),
+                DriveStatus::Degraded => messages.push("Drive degraded".to_string()),
+            }
+        }
+        let msg_str = messages.join(", ");
+
+        // Determine if disk was active during the 500ms sample period
+        let activity_str = {
             // Find matching stats for this device in both readings
             let initial = initial_disk_stats.iter().find(|ds| ds.device_name == sys_name);
             let second = final_disk_stats.iter().find(|ds| ds.device_name == sys_name);
 
             match (initial, second) {
                 (Some(initial), Some(second)) => {
-                    // Calculate delta for read operations
-                    let read_delta = second.sectors_read.saturating_sub(initial.sectors_read);
-                    let write_delta = second.sectors_written.saturating_sub(initial.sectors_written);
+                    // Check if any I/O activity occurred by comparing sectors read/written
+                    let read_delta = second.sectors_read > initial.sectors_read;
+                    let write_delta = second.sectors_written > initial.sectors_written;
 
-                    // Calculate time difference in milliseconds (500ms)
-                    let time_diff_ms = 500.0;
-
-                    // Calculate sectors per millisecond
-                    let total_sectors = read_delta + write_delta;
-                    let sectors_per_ms = total_sectors as f64 / time_diff_ms;
-
-                    // Estimate utilization percentage (simplified model)
-                    // This is a rough approximation based on sectors per millisecond
-                    // In practice, this would be much more complex and depend on disk capacity
-                    let utilization_percent = (sectors_per_ms * 100.0).min(100.0);
-                    format!("{:.1}%", utilization_percent)
+                    if read_delta || write_delta {
+                        "Active".to_string()
+                    } else {
+                        "Inactive".to_string()
+                    }
                 },
                 _ => "N/A".to_string(),
             }
@@ -201,7 +207,7 @@ fn debug_check_status() {
 
         // Don't show LED color for unmapped drives
         let color_display = if slot_label != "(Not Mapped)" {
-            format!("{:?}", color)
+            format!("{:?}{}", color, if should_blink { " (blinking)" } else { "" })
         } else {
             "-".to_string()
         };
@@ -210,7 +216,7 @@ fn debug_check_status() {
                  sys_name,
                  slot_label,
                  color_display,
-                 util_str,
+                 activity_str,
                  msg_str
         );
     }
