@@ -3,9 +3,6 @@ use std::fs;
 use std::fs::File;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
-use std::time::Instant;
-
-const ACTIVITY_SAMPLE_INTERVAL_MS: u64 = 1000; // milliseconds
 
 #[derive(Clone)]
 pub struct DriveSlot {
@@ -170,13 +167,6 @@ pub fn check_drive_status(sys_name: &str) -> DriveStatus {
     }
 
     DriveStatus::Healthy
-}
-
-/// Detect all block devices and initialize DiskStats for them
-/// Excludes loop devices for cleaner output
-pub fn detect_all_devices() -> io::Result<Vec<DiskStats>> {
-
-    // removed previous implementation as it's no longer relevant.
 }
 
 /// Build a sorted list of all devices to report on (detected + expected slots)

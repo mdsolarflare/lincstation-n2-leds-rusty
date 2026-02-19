@@ -6,12 +6,13 @@ use std::fs;
 use chrono::Utc;
 
 mod services;
-use services::disk_status::{check_drive_status, detect_all_devices, build_device_report_list, DriveStatus, SLOTS};
+use services::disk_status::{check_drive_status, build_device_report_list, DriveStatus, SLOTS};
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
     execute_command,
     read_led_bar_registers, read_led_strip_registers,
 };
+use crate::services::disk_status::read_disk_stats;
 use crate::services::led_controller::{LedBar, LedBarMode};
 
 // Configuration for your specific hardware
@@ -114,36 +115,47 @@ fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, Option<String>) 
 
 
 // --- Debug Methods ---
-
 fn debug_check_status() {
     println!("\n╔═══════════════════════════════════════════════════════════════════════╗");
     println!("║          LincStation N2 LED Daemon - Debug Status Report              ║");
     println!("╚═══════════════════════════════════════════════════════════════════════╝\n");
-    
+
     // ========== DISK STATUS SERVICE ==========
     println!("┌─ Disk Status Service ─────────────────────────────────────────────────┐");
-    
-    // 1. Detect all devices and read their stats
-    let disk_stats = match detect_all_devices() {
+
+    // 1. Read initial disk stats
+    let initial_disk_stats = match read_disk_stats() {
         Ok(stats) => stats,
         Err(e) => {
-            eprintln!("Error detecting devices: {}", e);
+            eprintln!("Error reading initial disk stats: {}", e);
             return;
         }
     };
 
-    // 2. Build comprehensive report list (detected + expected)
-    let detected_names: Vec<String> = disk_stats.iter().map(|ds| ds.device_name.clone()).collect();
+    // 2. Wait 500 ms
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // 3. Read disk stats again
+    let final_disk_stats = match read_disk_stats() {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("Error reading final disk stats: {}", e);
+            return;
+        }
+    };
+
+    // 4. Build comprehensive report list (detected + expected)
+    let detected_names: Vec<String> = initial_disk_stats.iter().map(|ds| ds.device_name.clone()).collect();
     let report_rows = build_device_report_list(&detected_names);
-    
-    // 3. Map sys_name -> slot_name for quick lookup
+
+    // 5. Map sys_name -> slot_name for quick lookup
     let mut sys_to_slot = HashMap::new();
     for slot in SLOTS {
         sys_to_slot.insert(slot.sys_name.to_string(), slot.slot_name);
     }
 
-    println!("{:<12} | {:<12} | {:<8} | {:<12} | {}", 
-        "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "MESSAGE");
+    println!("{:<12} | {:<12} | {:<8} | {:<12} | {}",
+             "DEVICE", "MAPPED SLOT", "COLOR", "UTIL %", "MESSAGE");
     println!("{}", "-".repeat(73)); // This should align with the surrounding column sizes.
 
     for sys_name in report_rows {
@@ -153,17 +165,39 @@ fn debug_check_status() {
             None => "(Not Mapped)",
         };
 
-        // Determine Status
+        // Determine Status (using initial stats)
         let status = check_drive_status(&sys_name);
         let (color, msg) = drive_status_to_led_color(status);
         let msg_str = msg.unwrap_or_else(|| "".to_string());
 
-        // Get disk stats if available
-        let util_str = disk_stats
-            .iter()
-            .find(|ds| ds.device_name == sys_name)
-            .map(|ds| format!("{:.1}%", ds.utilization_percent))
-            .unwrap_or_else(|| "N/A".to_string());
+        // Calculate utilization percentage using delta from initial to second stats
+        let util_str = {
+            // Find matching stats for this device in both readings
+            let initial = initial_disk_stats.iter().find(|ds| ds.device_name == sys_name);
+            let second = final_disk_stats.iter().find(|ds| ds.device_name == sys_name);
+
+            match (initial, second) {
+                (Some(initial), Some(second)) => {
+                    // Calculate delta for read operations
+                    let read_delta = second.sectors_read.saturating_sub(initial.sectors_read);
+                    let write_delta = second.sectors_written.saturating_sub(initial.sectors_written);
+
+                    // Calculate time difference in milliseconds (500ms)
+                    let time_diff_ms = 500.0;
+
+                    // Calculate sectors per millisecond
+                    let total_sectors = read_delta + write_delta;
+                    let sectors_per_ms = total_sectors as f64 / time_diff_ms;
+
+                    // Estimate utilization percentage (simplified model)
+                    // This is a rough approximation based on sectors per millisecond
+                    // In practice, this would be much more complex and depend on disk capacity
+                    let utilization_percent = (sectors_per_ms * 100.0).min(100.0);
+                    format!("{:.1}%", utilization_percent)
+                },
+                _ => "N/A".to_string(),
+            }
+        };
 
         // Don't show LED color for unmapped drives
         let color_display = if slot_label != "(Not Mapped)" {
@@ -172,20 +206,20 @@ fn debug_check_status() {
             "-".to_string()
         };
 
-        println!("{:<12} | {:<12} | {:<8} | {:<12} | {}", 
-            sys_name, 
-            slot_label, 
-            color_display, 
-            util_str,
-            msg_str
+        println!("{:<12} | {:<12} | {:<8} | {:<12} | {}",
+                 sys_name,
+                 slot_label,
+                 color_display,
+                 util_str,
+                 msg_str
         );
     }
-    
+
     println!("└───────────────────────────────────────────────────────────────────────┘\n");
 
     // ========== LED CONTROLLER SERVICE ==========
     println!("┌─ LED Controller Service ──────────────────────────────────────────────┐");
-    
+
     let bus = match find_i2c_bus() {
         Some(b) => b,
         None => {
@@ -199,32 +233,32 @@ fn debug_check_status() {
 
     let bus_name = get_i2c_bus_name(bus);
     println!("✓ LED Controller found on I2C bus {}: {}\n", bus, bus_name);
-    
+
     // Read LED Bar registers
     println!("LED Bar Registers (0x90-0x9A):");
     match read_led_bar_registers(bus) {
         Ok(regs) => {
-            println!("  Mode (0x90):           0x{:02X} ({})", regs.mode, 
-                match regs.mode {
-                    0 => "Solid",
-                    1 => "Breath",
-                    2 => "Loop",
-                    _ => "Unknown",
-                });
+            println!("  Mode (0x90):           0x{:02X} ({})", regs.mode,
+                     match regs.mode {
+                         0 => "Solid",
+                         1 => "Breath",
+                         2 => "Loop",
+                         _ => "Unknown",
+                     });
             println!("  Brightness (0x91):          0x{:02X} ({}/255)", regs.brightness, regs.brightness);
-            println!("  Color RGB (0x92-94):        R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.color_red, regs.color_green, regs.color_blue);
+            println!("  Color RGB (0x92-94):        R=0x{:02X} G=0x{:02X} B=0x{:02X}",
+                     regs.color_red, regs.color_green, regs.color_blue);
             println!("    (used by Solid & Breath modes)");
-            println!("  Loop Color A RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.loop_a_red, regs.loop_a_green, regs.loop_a_blue);
-            println!("  Loop Color B RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}", 
-                regs.loop_b_red, regs.loop_b_green, regs.loop_b_blue);
+            println!("  Loop Color A RGB (0x95-97): R=0x{:02X} G=0x{:02X} B=0x{:02X}",
+                     regs.loop_a_red, regs.loop_a_green, regs.loop_a_blue);
+            println!("  Loop Color B RGB (0x98-9A): R=0x{:02X} G=0x{:02X} B=0x{:02X}",
+                     regs.loop_b_red, regs.loop_b_green, regs.loop_b_blue);
         }
         Err(e) => {
             println!("✗ Failed to read LED bar registers: {}", e);
         }
     }
-    
+
     // Read LED Strip registers
     println!("\nLED Strip Registers (8 disk/device LEDs):");
     match read_led_strip_registers(bus) {
@@ -233,17 +267,17 @@ fn debug_check_status() {
             println!("    Standard On/Off: 0xA0 / 0xB0");
             println!("    NVME     On/Off: 0xA1 / 0xB1");
             println!("\n  Strip States:");
-            println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | R_OFF  | R_OFF_V | B_REG  | B_VAL", 
-                "Name");
+            println!("    {:<8} | W_ON   | W_ON_V | W_OFF  | W_OFF_V | R_ON   | R_ON_V | R_OFF  | R_OFF_V | B_REG  | B_VAL",
+                     "Name");
             println!("    {}", "-".repeat(110));
             for strip in &strip_regs.strips {
-                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}", 
-                    strip.name,
-                    strip.white_on_reg, strip.white_on_val,
-                    strip.white_off_reg, strip.white_off_val,
-                    strip.red_on_reg, strip.red_on_val,
-                    strip.red_off_reg, strip.red_off_val,
-                    strip.blink_reg, strip.blink_val);
+                println!("    {:<8} | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}   | 0x{:02X}   | 0x{:02X}    | 0x{:02X}   | 0x{:02X}",
+                         strip.name,
+                         strip.white_on_reg, strip.white_on_val,
+                         strip.white_off_reg, strip.white_off_val,
+                         strip.red_on_reg, strip.red_on_val,
+                         strip.red_off_reg, strip.red_off_val,
+                         strip.blink_reg, strip.blink_val);
             }
         }
         Err(e) => {
