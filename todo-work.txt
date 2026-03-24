@@ -1,3 +1,11 @@
 - fix the utilization on the disk states
 - implement the logging of "check-status"
 - properly implement updating the state of the led controller intended state. llm keeps screwing it up so let's do it last
+
+
+citations
+https://github.com/tsew/lincstation_leds
+https://gist.github.com/albal/f6ea7b2f1a9d7ffc97207a3636928d4f
+https://github.com/fazalmajid/lincstation_leds
+https://codeberg.org/wertarbyte/lncstn-leds
+

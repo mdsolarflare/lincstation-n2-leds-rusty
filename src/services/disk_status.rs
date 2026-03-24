@@ -4,27 +4,45 @@ use std::fs::File;
 use std::path::Path;
 use std::io::{BufRead, BufReader};
 
-#[derive(Clone)]
+/// LincStation N2 Drive Status Monitor
+///
+/// This module reads the status of storage devices connected to the LincStation N2
+/// (SATA and NVMe) and the internal eMMC.
+///
+/// Reference for Linux Block Devices:
+/// https://docs.kernel.org/admin-guide/blockdev/index.html
+
+/// The physical model of the disk drives in the LincStation N2
+/// 8 network/storage locations
+pub const SLOTS: &[DriveSlot] = &[
+    // Management/OS slot
+    DriveSlot { slot_name: "MGMT",  sys_name: "TBD", sys_block_path: "TBD", driver_parsing_method: DriveParsingMethod::NETWORK },
+    DriveSlot { slot_name: "OS", sys_name: "mmcblk0", sys_block_path: "/device/life_time", driver_parsing_method: DriveParsingMethod::EMMC },
+    // SATA Drives
+    DriveSlot { slot_name: "SATA1", sys_name: "sda", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::SATA },
+    DriveSlot { slot_name: "SATA2", sys_name: "sdb", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::SATA },
+    // NVMe Drives
+    DriveSlot { slot_name: "NVME1", sys_name: "nvme0n1", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::NVME },
+    DriveSlot { slot_name: "NVME2", sys_name: "nvme1n1", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::NVME },
+    DriveSlot { slot_name: "NVME3", sys_name: "nvme2n1", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::NVME },
+    DriveSlot { slot_name: "NVME4", sys_name: "nvme3n1", sys_block_path: "/device/state", driver_parsing_method: DriveParsingMethod::NVME },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DriveParsingMethod {
+    NETWORK,
+    EMMC,
+    SATA,
+    NVME,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct DriveSlot {
     pub slot_name: &'static str,
     pub sys_name: &'static str,
+    pub sys_block_path: &'static str,
+    pub driver_parsing_method: DriveParsingMethod,
 }
-
-/// Registry of all physical drive slots on the LincStation N2.
-/// 8 storage locations
-pub const SLOTS: &[DriveSlot] = &[
-    // Management/OS slot
-    DriveSlot { slot_name: "MGMT",  sys_name: "TBD" },
-    DriveSlot { slot_name: "OS", sys_name: "mmcblk0" },
-    // SATA Drives
-    DriveSlot { slot_name: "SATA1", sys_name: "sda" },
-    DriveSlot { slot_name: "SATA2", sys_name: "sdb" },
-    // NVME Drives
-    DriveSlot { slot_name: "NVME1", sys_name: "nvme0n1" },
-    DriveSlot { slot_name: "NVME2", sys_name: "nvme1n1" },
-    DriveSlot { slot_name: "NVME3", sys_name: "nvme2n1" },
-    DriveSlot { slot_name: "NVME4", sys_name: "nvme3n1" },
-];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DriveStatus {
@@ -33,6 +51,100 @@ pub enum DriveStatus {
     Degraded,
 }
 
+/// Attempts to read the status of all defined slots.
+/// Returns a Vec of tuples containing slot name and its status.
+pub fn check_all_drives() -> Vec<(String, DriveStatus)> {
+    SLOTS.iter().map(|slot| check_single_drive(slot)).collect()
+}
+
+/// Reads and parses a single drive slot based on its physical model and driver type.
+fn check_single_drive(slot: &DriveSlot) -> (String, DriveStatus) {
+    let slot_name = slot.slot_name.to_string();
+
+    // Construct the full sysfs path
+    // /sys/block/<device>/<block_path>
+    let full_path = format!("/sys/block/{}{}", slot.sys_name, slot.sys_block_path);
+
+    // Attempt to read the file content
+    match read_sysfs_file(&full_path) {
+        Some(content) => {
+            let status = match slot.driver_parsing_method {
+                DriveParsingMethod::EMMC => parse_emmc(&content),
+                DriveParsingMethod::SATA => parse_sata(&content),
+                DriveParsingMethod::NVME => parse_nvme(&content),
+                DriveParsingMethod::NETWORK => DriveStatus::Healthy, // Network doesn't use these files in this model
+            };
+            (slot_name, status)
+        }
+        None => {
+            // If we fail to look it up, we get DriveStatus::Missing
+            (slot_name, DriveStatus::Missing)
+        }
+    }
+}
+
+/// Reads a string from the filesystem.
+fn read_sysfs_file(path: &str) -> Option<String> {
+    fs::read_to_string(path).ok()
+}
+
+/// Parses EMMC life_time.
+///
+/// The two values represent the estimated "wear and tear" on the internal NAND flash.
+/// The values correspond to different types of memory blocks:
+/// * **Value 1 (Type A):** Usually represents SLC/Enhanced memory.
+/// * **Value 2 (Type B):** Usually represents MLC/TLC memory blocks.
+///
+/// Hex Value to Life Used Percentage Mapping:
+/// * 0x01 (0-10%) -> Brand New
+/// * 0x0A (90-100%) -> Critical
+/// * 0x0B (>110%) -> Danger
+///
+/// Logic: If < 60% (Hex < 0x3B) -> Healthy, else -> Degraded.
+fn parse_emmc(life_time: &str) -> DriveStatus {
+    // Assuming the file contains a hex string like "0xXX"
+    match u8::from_str_radix(life_time.trim_start_matches("0x"), 16).ok() {
+        Some(hex_val) if hex_val < 0x3B => DriveStatus::Healthy, // < 60%
+        _ => DriveStatus::Degraded,
+    }
+}
+
+/// Parses SATA device state.
+///
+/// | State | Meaning |
+/// |---|---|
+/// | `running` | Normal. The device is active. |
+/// | `offline` | Bad. The kernel has disabled the device. |
+/// | `blocked` | Commands are being held back (error recovery). |
+/// | `created` | Initial state. |
+///
+/// Logic: If 'running' -> Healthy, else -> Degraded.
+fn parse_sata(state: &str) -> DriveStatus {
+    match state.trim() {
+        "running" => DriveStatus::Healthy,
+        _ => DriveStatus::Degraded,
+    }
+}
+
+/// Parses NVMe device state.
+///
+/// | State | Meaning |
+/// |---|---|
+/// | `live` | Normal. The drive is ready for I/O. |
+/// | `new` | Device detected but setup not complete. |
+/// | `resetting` | Driver is resetting the controller. |
+/// | `dead` | Fatal Error. Controller failed to initialize. |
+///
+/// Logic: If 'live' -> Healthy, else -> Degraded.
+fn parse_nvme(state: &str) -> DriveStatus {
+    match state.trim() {
+        "live" => DriveStatus::Healthy,
+        _ => DriveStatus::Degraded,
+    }
+}
+
+
+// TODO this is the disk stats model, document better
 #[derive(Debug, Clone, Default)]
 pub struct DiskStats {
     // Metadata fields
@@ -147,45 +259,26 @@ pub fn read_disk_stats() -> io::Result<Vec<DiskStats>> {
     Ok(stats_list)
 }
 
-/// Check drive health status based on device state and file existence
-pub fn check_drive_status(sys_name: &str) -> DriveStatus {
-    let sys_path = format!("/sys/block/{}", sys_name);
-    let path = Path::new(&sys_path);
-
-    if !path.exists() {
-        return DriveStatus::Missing;
-    }
-
-    let state_path = path.join("device/state");
-    if state_path.exists() {
-        if let Ok(content) = fs::read_to_string(&state_path) {
-            let polished = content.trim();
-            if polished == "dead" || polished == "transport-offline" {
-                return DriveStatus::Degraded;
-            }
+fn get_disk_stats_over_interval() -> Option<Vec<DiskStats>> {
+    // 1. Read initial disk stats
+    let initial_disk_stats = match read_disk_stats() {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("Error reading initial disk stats: {}", e);
+            return None;
         }
-    }
+    };
 
-    DriveStatus::Healthy
-}
+    // 2. Wait 500 ms
+    std::thread::sleep(std::time::Duration::from_millis(500));
 
-/// Build a sorted list of all devices to report on (detected + expected slots)
-pub fn build_device_report_list(detected_devices: &[String]) -> Vec<String> {
-    use std::collections::HashSet;
-    
-    let mut report_rows: HashSet<String> = HashSet::new();
-    
-    // Add all detected devices
-    for device in detected_devices {
-        report_rows.insert(device.clone());
-    }
-    
-    // Add all expected slots that weren't detected
-    for slot in SLOTS {
-        report_rows.insert(slot.sys_name.to_string());
-    }
-    
-    let mut result: Vec<String> = report_rows.into_iter().collect();
-    result.sort();
-    result
+    // 3. Read disk stats again
+    let final_disk_stats = match read_disk_stats() {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("Error reading final disk stats: {}", e);
+            return None;
+        }
+    };
+    Some(initial_disk_stats)
 }

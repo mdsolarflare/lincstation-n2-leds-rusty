@@ -6,13 +6,13 @@ use std::fs;
 use chrono::Utc;
 
 mod services;
-use services::disk_status::{check_drive_status, build_device_report_list, DriveStatus, SLOTS};
+use services::disk_status::{check_drive_status,, DriveStatus, SLOTS};
 use services::led_controller::{
     LedColor, LedControllerState, find_i2c_bus, get_i2c_bus_name, LedCommand, 
     execute_command,
     read_led_bar_registers, read_led_strip_registers,
 };
-use crate::services::disk_status::read_disk_stats;
+use crate::services::disk_status::{read_disk_stats, DiskStats};
 use crate::services::led_controller::{LedBar, LedBarMode};
 
 // Configuration for your specific hardware
@@ -104,7 +104,6 @@ fn main() {
 }
 
 
-/// Convert DriveStatus to LED color
 /// Convert DriveStatus to LED color and blink mode
 fn drive_status_to_led_color(status: DriveStatus) -> (LedColor, bool) {
     match status {
@@ -124,31 +123,6 @@ fn debug_check_status() {
     // ========== DISK STATUS SERVICE ==========
     println!("┌─ Disk Status Service ─────────────────────────────────────────────────┐");
 
-    // 1. Read initial disk stats
-    let initial_disk_stats = match read_disk_stats() {
-        Ok(stats) => stats,
-        Err(e) => {
-            eprintln!("Error reading initial disk stats: {}", e);
-            return;
-        }
-    };
-
-    // 2. Wait 500 ms
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    // 3. Read disk stats again
-    let final_disk_stats = match read_disk_stats() {
-        Ok(stats) => stats,
-        Err(e) => {
-            eprintln!("Error reading final disk stats: {}", e);
-            return;
-        }
-    };
-
-    // 4. Build comprehensive report list (detected + expected)
-    let detected_names: Vec<String> = initial_disk_stats.iter().map(|ds| ds.device_name.clone()).collect();
-    let report_rows = build_device_report_list(&detected_names);
-
     // 5. Map sys_name -> slot_name for quick lookup
     let mut sys_to_slot = HashMap::new();
     for slot in SLOTS {
@@ -159,6 +133,20 @@ fn debug_check_status() {
              "DEVICE", "MAPPED SLOT", "COLOR", "ACTIVE", "MESSAGE");
     println!("{}", "-".repeat(73)); // This should align with the surrounding column sizes.
 
+    // TODO what was the total list?
+    /*┌─ Disk Status Service ─────────────────────────────────────────────────┐
+    DEVICE       | MAPPED SLOT  | COLOR    | ACTIVE       | MESSAGE
+        -------------------------------------------------------------------------
+        TBD          | MGMT         | White (blinking) | N/A          | Drive missing
+    mmcblk0      | OS           | White    | Inactive     | Drive present
+    nvme0n1      | NVME1        | White    | N/A          | Drive present
+    nvme1n1      | NVME2        | White    | Inactive     | Drive present
+    nvme2n1      | NVME3        | White    | N/A          | Drive present
+    nvme3n1      | NVME4        | White (blinking) | N/A          | Drive missing
+    sda          | SATA1        | White    | Inactive     | Drive present
+    sdb          | SATA2        | White    | N/A          | Drive present
+    zram0        | (Not Mapped) | -        | Inactive     | Drive present
+    └───────────────────────────────────────────────────────────────────────┘*/
     for sys_name in report_rows {
         // Determine Mapping
         let slot_label = match sys_to_slot.get(&sys_name) {
@@ -166,47 +154,37 @@ fn debug_check_status() {
             None => "(Not Mapped)",
         };
 
-        // Determine Status (using initial stats)
-        let status = check_drive_status(&sys_name);
+        // TODO do this using driveslot instead
+        let status = check_single_drive(driveslot);
+
         let (color, should_blink) = drive_status_to_led_color(status);
 
-        // Build message string with activity and status info
+        // Build message string with status info
         let mut messages = Vec::new();
         if should_blink {
             messages.push("Drive missing".to_string());
         } else {
             match status {
-                DriveStatus::Healthy => messages.push("Drive present".to_string()),
-                DriveStatus::Missing => messages.push("No drive detected".to_string()),
-                DriveStatus::Degraded => messages.push("Drive degraded".to_string()),
+                // Direct mapping: Healthy -> Active
+                DriveStatus::Healthy => messages.push("Active".to_string()),
+                // Missing -> Inactive (or No drive detected)
+                DriveStatus::Missing => messages.push("Inactive".to_string()),
+                // Degraded -> Active (Still communicating)
+                DriveStatus::Degraded => messages.push("Active (Degraded)".to_string()),
             }
         }
         let msg_str = messages.join(", ");
 
-        // Determine if disk was active during the 500ms sample period
-        let activity_str = {
-            // Find matching stats for this device in both readings
-            let initial = initial_disk_stats.iter().find(|ds| ds.device_name == sys_name);
-            let second = final_disk_stats.iter().find(|ds| ds.device_name == sys_name);
-
-            match (initial, second) {
-                (Some(initial), Some(second)) => {
-                    // Check if any I/O activity occurred by comparing sectors read/written
-                    let delta = second.ms_doing_io > initial.ms_doing_io;
-
-                    if delta {
-                        "Active".to_string()
-                    } else {
-                        "Inactive".to_string()
-                    }
-                },
-                _ => "N/A".to_string(),
-            }
+        // DETERMINE ACTIVITY: Direct mapping from DriveStatus
+        let activity_str = match status {
+            DriveStatus::Healthy => "Active".to_string(),
+            DriveStatus::Missing => "Inactive".to_string(),
+            DriveStatus::Degraded => "Active".to_string(),
         };
 
         // Don't show LED color for unmapped drives
         let color_display = if slot_label != "(Not Mapped)" {
-            format!("{:?}{}", color, if should_blink { " (blinking)" } else { "" })
+            format!("{:?}{}", color, if should_blink { " (b)" } else { "    " })
         } else {
             "-".to_string()
         };
@@ -303,6 +281,7 @@ fn debug_check_status() {
 
     std::process::exit(0);
 }
+
 
 // ============================================================================
 // TEST/DEBUG HELPERS
@@ -406,6 +385,7 @@ fn parse_color_argument(color_str: &str) -> Result<LedColor, String> {
 /// This uses the public `execute_command` path so the same command logic
 /// and state-updates are exercised during the test.
 fn run_test_all_off(bus: i32) -> Result<(), String> {
+    // TODO all these led controllerstate creates also shouldn't happen. we should create one ledcontroller and keep track of it.
     let mut state = LedControllerState::new();
 
     // Use the batch operation so we don't repeat the same write logic here
@@ -441,6 +421,7 @@ fn run_test_all_red(bus: i32) -> Result<(), String> {
     Ok(())
 }
 
+// TODO this shouldn't be called 4 times, only once.
 /// Parse --bus argument from command line args
 fn parse_bus_arg(args: &[String]) -> i32 {
     for (i, arg) in args.iter().enumerate() {
